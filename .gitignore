@@ -1,0 +1,8 @@
+downloads/
+decomp/
+tools/
+bin/
+obj/
+*.user
+release/
+*.zip

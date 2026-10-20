@@ -1,0 +1,24 @@
+Ship of Fools Tweaks
+====================
+
+What it does
+- Planks (repair boards) can't be loaded into cannons.
+- Paddle swings don't stagger or shove your teammates. Hitting a stunned teammate still frees them.
+
+Install (Windows)
+1. In Steam, right-click Ship of Fools > Manage > Browse local files.
+2. Copy everything in this zip into that folder, so winhttp.dll ends up next to ShipOfFools.exe.
+3. Launch the game. The FIRST launch takes 1-3 minutes on a black or frozen-looking screen
+   while the mod loader sets itself up. Let it finish. Later launches are normal speed.
+
+Both players in a co-op game need the mod installed, on the same version.
+
+Settings
+After the first launch, edit BepInEx\config\dev.kevin.shipoffools.tweaks.cfg to turn either tweak on or off.
+
+Uninstall
+Delete winhttp.dll from the game folder. The game goes back to normal.
+(Delete the BepInEx and dotnet folders too to remove everything.)
+
+Updating
+Replace BepInEx\plugins\ShipOfFoolsTweaks\ShipOfFoolsTweaks.dll with the new one.
