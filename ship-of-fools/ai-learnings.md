@@ -22,3 +22,5 @@
 ## Gotchas
 - `pkill -f ShipOfFools.exe` kills the calling shell too, because the pattern appears in its own command line. Use `pgrep -x`/`pkill -x ShipOfFools.exe`.
 - Interop gives signatures only, no method bodies. Confirm behavior in game or in Ghidra.
+- IL2CPP can inline small private methods into their caller, and an inlined method never hits its Harmony hook. `PaddleAttack.ApplyEffects` was one: a flag set there never fired. Hook Unity message methods (`OnTriggerEnter`, `Update`, ...) instead when you need a reliable "we're inside X" window, since the engine calls those directly.
+- Verified in game (local co-op, keyboard + controller): plank block works; paddle no longer flinches or shoves teammates (v0.1.1). Island NPCs are `NPC`, not players, so they still react to hits by design.

@@ -11,7 +11,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.kevin.shipoffools.tweaks";
     public const string Name = "Ship of Fools Tweaks";
-    public const string Version = "0.1.0";
+    public const string Version = "0.1.1";
 
     internal static ManualLogSource Logger { get; private set; } = null!;
     internal static ConfigEntry<bool> BlockPlankLoading { get; private set; } = null!;
