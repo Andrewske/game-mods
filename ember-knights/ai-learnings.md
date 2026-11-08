@@ -7,7 +7,21 @@
   Steam Cloud is on, so edit saves with the game closed and back them up first.
 - Logs: `compatdata/1135230/pfx/drive_c/users/steamuser/AppData/LocalLow/Doom Turtle/EmberKnights/Player.log` (+ `Player-prev.log`).
 - Netcode: Photon (`XNetworkPhoton`) with the game's own packet layer in `XNetworkSYS` (C2S_/S2C_ handlers). Kevin hosts, Bre joins online.
-- Loader plan: BepInEx 6 IL2CPP, same as ../ship-of-fools (not installed yet).
+- Loader plan: BepInEx 6 IL2CPP, same as ../ship-of-fools (not installed yet). Stable BepInEx rejects metadata v31
+  ("We support 23-29, got 31"); bleeding-edge builds support it since mid-2025 (BepInEx issues #1115, #1120), so be.789
+  should work. Unconfirmed until we launch it.
+- No existing Ember Knights mod scene (no Thunderstore community). GitHub "trainer" repos look like malware bait.
+- Bre's laptop: `slonk-n-breh-1` (Tailscale 100.86.233.106, Windows). No SSH server; get files via Taildrop.
+
+## Save format (save-tool/)
+- `ts_binary.py` decodes/encodes TSBinary (`TSType` enum in decomp `TSType.cs`): 1-byte tag + payload, Object/List =
+  int32 count (-1 = null), Object keys and strings = 7-bit length + UTF-8, DateTime = int64. Lists tag every element.
+  Round trip is byte-exact on the live save and all 11 backups.
+- Root: SaveVersion 59, GameVersion "2.3.1", Options, `Slots` (list of 3, null = unused), InputMapping1-4.
+  Kevin plays slot 0. Slot 1 holds fresh-save defaults (1 weapon, 7 skills, 43 relics), a handy baseline.
+- `save_view.py summary|dump` sorts the 115 slot keys into unlock / story / currency / stats / telemetry / session.
+  The save does not separate solo from co-op progress, so unlock sync = per-item union/max, leaving stats alone.
+- Tests: `uv run --no-project --with pytest pytest -q` (synthetic saves only; never commit a real rog.dat).
 
 ## Decompiling
 - Cpp2IL 2022.0.7 (ship-of-fools/tools) fails: "We support 24-29, got 31".
