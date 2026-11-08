@@ -46,3 +46,16 @@
 - Rejoin failures show on the client, so get Bre's Player.log when one fails.
 - Host pushes some rewards to clients: S2C_WeaponUnlock, S2C_EmberRewardResponse, S2C_StartEmberDustSequenceResponse,
   S2C_EveeAbilityUpgradeUnlockedSequence. Other unlocks are probably saved by the host only (unconfirmed).
+
+## Nexus (pre-run) shop
+- One shared shop: `XGameState.NexusShopData` (`NexusShopData_t { ShopState, List<NexusShopItem_t> ShopItems }`), synced to clients,
+  so a host-only patch should be enough.
+- `NexusShopItem_t { eItemType ItemType; int ItemDefId; ushort ItemNetId; int SlotIndex }`. `eItemType`: Weapon 1, Relic 4, Ability 9, EmberTreeUpgrade 12.
+- Stock comes from `GameUtils.GenerateNexusShopItems_AUTH(World, SaveSlot, Rand, NumItems, OutItemList, FromReroll, ExcludeList)`:
+  pool = host slot's unlocked items, filtered by DLC / `XRelicDef.IsInPool` / `RelicUtils.PassesAllMaxOwnedChecks`, shuffled,
+  each pick gets `World.GetNextNetId()`. Spawned by `GameInst.SpawnNexusShopItems`; rerolls via `GameUtils.ReRollNexusShop`.
+- `GameInst.GetNumberOfNexusShopItems` is a constant 4.
+- Plan: Harmony postfix on GenerateNexusShopItems_AUTH that rewrites ItemType/ItemDefId of each entry to the configured
+  favorites, keeping ItemNetId and SlotIndex. Skip when FromReroll (so rerolls stay random) and in Daily Dungeon / Boss Rush.
+- Relic names: `data/relic-names.tsv` (131 relics), from the English table in resources.assets (`relic_name_<defId>`,
+  find it via `\nui_common_quit;Quit\r\n`; rows end in CRLF). IDs match the values in the save's `relicUnlocks`.
