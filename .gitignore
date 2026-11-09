@@ -6,3 +6,4 @@ obj/
 *.user
 release/
 *.zip
+__pycache__/

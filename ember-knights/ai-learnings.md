@@ -7,9 +7,12 @@
   Steam Cloud is on, so edit saves with the game closed and back them up first.
 - Logs: `compatdata/1135230/pfx/drive_c/users/steamuser/AppData/LocalLow/Doom Turtle/EmberKnights/Player.log` (+ `Player-prev.log`).
 - Netcode: Photon (`XNetworkPhoton`) with the game's own packet layer in `XNetworkSYS` (C2S_/S2C_ handlers). Kevin hosts, Bre joins online.
-- Loader plan: BepInEx 6 IL2CPP, same as ../ship-of-fools (not installed yet). Stable BepInEx rejects metadata v31
-  ("We support 23-29, got 31"); bleeding-edge builds support it since mid-2025 (BepInEx issues #1115, #1120), so be.789
-  should work. Unconfirmed until we launch it.
+- Loader: BepInEx 6 be.789 (IL2CPP win-x64), installed 2026-11-09 and confirmed working on metadata v31.1
+  (stable BepInEx rejects v31). First launch builds interop in ~1 min. Same `winhttp=native,builtin` prefix override as
+  ship-of-fools, in `compatdata/1135230/pfx/user.reg`. Backups of the original user.reg and rog.dat: `downloads/backups/`.
+- Plugin: `src/EmberKnightsTweaks` (`dotnet build -c Release` deploys to BepInEx/plugins). Needs `~/.dotnet` on PATH.
+  Tests for the game-free logic: `dotnet test src/EmberKnightsTweaks.Tests`.
+- The game's own "[Echo]" lines in Player.log go through Debug.LogError; they are not errors.
 - No existing Ember Knights mod scene (no Thunderstore community). GitHub "trainer" repos look like malware bait.
 - Bre's laptop: `slonk-n-breh-1` (Tailscale 100.86.233.106, Windows). No SSH server; get files via Taildrop.
 
@@ -58,7 +61,7 @@
 - Shop rules (from Kevin): both players share the same 4 slots, so 4 relics total per run. A bought slot stays empty;
   a reroll refills only the open slots.
 
-### Favorite-relics mod plan (not built; test after the current run ends)
+### Favorite-relics mod (built 2026-11-09, v0.1.0; not tested in a real shop yet)
 - Ordered favorites queue (Kevin + Bre, 2026-11-08; they may trim it to 4 later):
   179 Absolute Ambition, 177 Pristine Band, 219 Goliath Wargear, 131 Call to Arms, 92 Gilded Remains,
   152 Titan's Wargear, 130 Supreme Ambition, 133 Spite Shield, 146 Mimic King's Consort, 220 Midas Mail.
@@ -66,11 +69,17 @@
 - Behavior: first stock = first 4 favorites. Each reroll fills open slots with the next favorites in the queue (skip
   ones already on display or owned). Once the queue runs out, keep the game's own random picks. Reset the queue cursor
   on a fresh stock (`FromReroll == false`). Rerolled-away favorites don't come straight back.
-- Hook: Harmony postfix on `GameUtils.GenerateNexusShopItems_AUTH`. Overwrite ItemType = Relic (4) and ItemDefId in
-  `OutItemList`, keep ItemNetId and SlotIndex (struct list: write back `list[i] = modified`). NumItems on a reroll should
-  equal the open-slot count; confirm in game.
-- Skip a favorite that fails `RelicUtils.PassesAllMaxOwnedChecks` / `XRelicDef.IsInPool` (e.g. Ambition or Wargear pairs
-  could be mutually exclusive; unverified). Disable in Daily Dungeon / Boss Rush.
+- Callers: `GameInst.StartGameCR` (first stock, FromReroll false) and `PlayerUtils.ReRollNexusShop` (host only). The
+  reroll counts the shop drops still on display, passes that as NumItems, the live `NexusShopData.ShopItems` as
+  OutItemList and the old items as ExcludeList, then puts the old SlotIndex values back and sends NexusShopData to peers.
+- The generator also mixes in skills (abilities) by `XRandom.Chance01`; the mod turns replaced slots into relics.
+- Hook: Harmony postfix on `GameUtils.GenerateNexusShopItems_AUTH`. Overwrites ItemType = Relic and ItemDefId on the
+  last NumItems entries, keeps ItemNetId (struct list: write back `list[i] = modified`). Each favorite is offered at
+  most once per run (cursor only moves forward), so a bought favorite never comes back from the queue.
+- Eligibility mirrors the generator: `XRelicDef.Get(id)`, `enabled`, `SaveSlot.IsItemUnlocked(def)`,
+  `IsInPool(NexusShop 9, Nexus 6)`, `RelicUtils.PassesAllMaxOwnedChecks(def, counts, World.AllPlayers, null)` with
+  counts from `GetRelicInstanceCounts(World, Nexus, ref counts)`. Pool check skips DLC (generator also calls HasDLC).
+- Off in Daily Dungeon / Boss Rush (`World.IsDailyDungeon` / `IsBossRush`). Log line per stock/reroll in LogOutput.log.
 - OPEN QUESTION (Kevin asking Bre): should the queue re-offer a relic one player already owns? They might want a second
   copy when both can own it. Until decided, follow the game's own max-owned rules only. Relevant `XRelicDef` fields:
   `CheckAllPlayers`, `MaxGloballyOwned`, `MaxPlayerOwned`.
