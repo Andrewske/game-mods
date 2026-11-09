@@ -71,6 +71,9 @@
   equal the open-slot count; confirm in game.
 - Skip a favorite that fails `RelicUtils.PassesAllMaxOwnedChecks` / `XRelicDef.IsInPool` (e.g. Ambition or Wargear pairs
   could be mutually exclusive; unverified). Disable in Daily Dungeon / Boss Rush.
+- They buy one copy of each, and some of these relics are one-per-team (they help both knights). So skip a favorite if
+  EITHER player already owns it, not just the buyer. Relevant `XRelicDef` fields: `CheckAllPlayers`, `MaxGloballyOwned`,
+  `MaxPlayerOwned`; check all players' inventories ourselves rather than trusting the per-player check.
 - Config (BepInEx cfg): `Enabled`, `FavoriteRelics = 179,177,219,131,92,152,130,133,146,220` (ids; names optional later).
 - Test checklist: first stock shows favorites 1-4 with normal prices; buy one, reroll, open slots get 5+; Bre's client
   sees the same items and can buy them; queue resets next run.
