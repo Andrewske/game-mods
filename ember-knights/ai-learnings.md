@@ -61,7 +61,7 @@
 - Shop rules (from Kevin): both players share the same 4 slots, so 4 relics total per run. A bought slot stays empty;
   a reroll refills only the open slots.
 
-### Favorite-relics mod (built 2026-11-09, v0.1.0; not tested in a real shop yet)
+### Favorite-relics mod (v0.1.0, verified in game 2026-11-09: stock 179,177,219,131; buy one + reroll gave 92,152,130)
 - Ordered favorites queue (Kevin + Bre, 2026-11-08; they may trim it to 4 later):
   179 Absolute Ambition, 177 Pristine Band, 219 Goliath Wargear, 131 Call to Arms, 92 Gilded Remains,
   152 Titan's Wargear, 130 Supreme Ambition, 133 Spite Shield, 146 Mimic King's Consort, 220 Midas Mail.
