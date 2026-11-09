@@ -44,6 +44,24 @@
 - Resume: `GameInst.ResumeSavedStateCR(sd, List<ResumeSavedStateLocalMPPlayerData>)` maps saved players to local Rewired ids,
   then `ResumeSavedState_PostFixupPlayers`. Loading goes through `CommonStart_BeginLoadingCR(area, fromReconnect, fromSaveState)`.
 
+## Online save / resume mod (v0.2.0, built 2026-11-09, untested)
+- `XNetworkBase.get_IsLocal` = `_connectionType` (0x58) is not Server(1)/Client(2). `OnlineSavePatch` sets it to None
+  around `CanSaveState` / `GetSaveState` on the host only, then restores it. Not inlined (both are real calls).
+- CanSaveState's room rule: `currentRoomCMP` (World+0xB0) roomState (0x6C) == 116 or 7, or roomType (0x68) == 11.
+- Pause > Main Menu (`UIPause.<ClickedMainMenu>b__27_0`): CanSaveState -> GetSaveState -> stored in
+  `CurrentSaveSlot.MultiplayerSavedState` if `World.AllPlayers.Count > 1`, else `.SavedState` -> SaveGameData ->
+  `SendHostClosedGame` when hosting.
+- `UIMainMenu.ClickedResumeSingle`: takes `GameInst.CurrentSaveSlot.SavedState`, nulls it + saves, `DecodeData(World.GameMods)`,
+  list of one `ResumeSavedStateLocalMPPlayerData { PlayerIndex 0, RWPlayerId 0 }`, `GameCode.Run(Game.ResumeSavedStateCR(...))`.
+  `OnlineResumePatch` does the same from the online lobby (`UIPlayerSelectOnline.Tick`, host, F9) but keeps the save.
+- Online start (`UIPlayerSelectOnline.StartGame_Internal`): host sends char data + save slot to all peers, then StartGameCR.
+  Resume sends nothing to peers yet, so Bre has to come in through the rejoin path (step 3, untested).
+- ResumeSavedStateCR body (raw asm, Cpp2IL ISIL is empty): CommonStart_BeginLoadingCR, CreateNewPlayerSpawnData +
+  SpawnPlayer per saved player, SpawnAreaCR, `XNetworkSYS.Deserialize_RejoinData`, room restore, PostFixupPlayers, ShowHud.
+- Naming raw calls: `decomp/cs-addr` (Cpp2IL `--use-processor attributeinjector`) has `[Address(RVA=...)]` per method;
+  VA = 0x180000000 + RVA, then `objdump -d -M intel --start-address=... GameAssembly.dll`. Attribute Length can be
+  far too short for coroutines; use the next method's address as the end.
+
 ## Reconnect / unlocks
 - Host log lines: "StartGameWaitForReconnects", "Host sending N rejoin datas after area loading" (rejoins are queued until area load).
 - Rejoin failures show on the client, so get Bre's Player.log when one fails.

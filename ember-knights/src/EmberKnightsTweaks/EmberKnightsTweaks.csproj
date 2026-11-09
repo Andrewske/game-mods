@@ -21,6 +21,9 @@
     <Reference Include="$(BepInExDir)/core/Il2CppInterop.Common.dll" Private="false" />
     <Reference Include="$(BepInExDir)/interop/Assembly-CSharp.dll" Private="false" />
     <Reference Include="$(BepInExDir)/interop/Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/Unity.InputSystem.dll" Private="false" />
   </ItemGroup>
 
   <Target Name="DeployToGame" AfterTargets="Build">
