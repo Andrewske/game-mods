@@ -55,7 +55,24 @@
   pool = host slot's unlocked items, filtered by DLC / `XRelicDef.IsInPool` / `RelicUtils.PassesAllMaxOwnedChecks`, shuffled,
   each pick gets `World.GetNextNetId()`. Spawned by `GameInst.SpawnNexusShopItems`; rerolls via `GameUtils.ReRollNexusShop`.
 - `GameInst.GetNumberOfNexusShopItems` is a constant 4.
-- Plan: Harmony postfix on GenerateNexusShopItems_AUTH that rewrites ItemType/ItemDefId of each entry to the configured
-  favorites, keeping ItemNetId and SlotIndex. Skip when FromReroll (so rerolls stay random) and in Daily Dungeon / Boss Rush.
+- Shop rules (from Kevin): both players share the same 4 slots, so 4 relics total per run. A bought slot stays empty;
+  a reroll refills only the open slots.
+
+### Favorite-relics mod plan (not built; test after the current run ends)
+- Ordered favorites queue (Kevin + Bre, 2026-11-08; they may trim it to 4 later):
+  179 Absolute Ambition, 177 Pristine Band, 219 Goliath Wargear, 131 Call to Arms, 92 Gilded Remains,
+  152 Titan's Wargear, 130 Supreme Ambition, 133 Spite Shield, 146 Mimic King's Consort, 220 Midas Mail.
+  All 10 are unlocked in Kevin's slot 0.
+- Behavior: first stock = first 4 favorites. Each reroll fills open slots with the next favorites in the queue (skip
+  ones already on display or owned). Once the queue runs out, keep the game's own random picks. Reset the queue cursor
+  on a fresh stock (`FromReroll == false`). Rerolled-away favorites don't come straight back.
+- Hook: Harmony postfix on `GameUtils.GenerateNexusShopItems_AUTH`. Overwrite ItemType = Relic (4) and ItemDefId in
+  `OutItemList`, keep ItemNetId and SlotIndex (struct list: write back `list[i] = modified`). NumItems on a reroll should
+  equal the open-slot count; confirm in game.
+- Skip a favorite that fails `RelicUtils.PassesAllMaxOwnedChecks` / `XRelicDef.IsInPool` (e.g. Ambition or Wargear pairs
+  could be mutually exclusive; unverified). Disable in Daily Dungeon / Boss Rush.
+- Config (BepInEx cfg): `Enabled`, `FavoriteRelics = 179,177,219,131,92,152,130,133,146,220` (ids; names optional later).
+- Test checklist: first stock shows favorites 1-4 with normal prices; buy one, reroll, open slots get 5+; Bre's client
+  sees the same items and can buy them; queue resets next run.
 - Relic names: `data/relic-names.tsv` (131 relics), from the English table in resources.assets (`relic_name_<defId>`,
   find it via `\nui_common_quit;Quit\r\n`; rows end in CRLF). IDs match the values in the save's `relicUnlocks`.
