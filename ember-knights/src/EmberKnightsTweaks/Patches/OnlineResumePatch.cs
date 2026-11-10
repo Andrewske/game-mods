@@ -39,6 +39,27 @@ internal static class OnlineResumePatch
         }
     }
 
+    // Backup trigger that needs no keyboard: with ResumeOnStart on, the host's Start
+    // button resumes the saved run instead of starting a fresh one.
+    [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.StartGame_Internal))]
+    internal static class ResumeOnStart
+    {
+        private static bool Prefix(GameCode.UIPlayerSelectOnline __instance)
+        {
+            if (!Plugin.OnlineResumeEnabled.Value || !Plugin.ResumeOnStart.Value || started) return true;
+            Plugin.Logger.LogInfo("Start pressed with ResumeOnStart on");
+            try
+            {
+                return !TryResume(__instance);
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Online resume failed, starting a normal run instead: {e}");
+                return true;
+            }
+        }
+    }
+
     public static void OnHotkey()
     {
         var open = lobby != null && lobby.IsOpened;
@@ -60,13 +81,13 @@ internal static class OnlineResumePatch
         }
     }
 
-    private static void TryResume(GameCode.UIPlayerSelectOnline lobby)
+    private static bool TryResume(GameCode.UIPlayerSelectOnline lobby)
     {
         var net = GameCode.XNetwork;
         if (net == null || !net.IsServer)
         {
             Plugin.Logger.LogWarning("Online resume: only the host can resume (not hosting a lobby)");
-            return;
+            return false;
         }
         var game = GameCode.Game;
         var slot = game.CurrentSaveSlot;
@@ -74,7 +95,7 @@ internal static class OnlineResumePatch
         if (saved == null)
         {
             Plugin.Logger.LogWarning("Online resume: no saved run in this save slot");
-            return;
+            return false;
         }
         var which = slot.MultiplayerSavedState != null ? "MultiplayerSavedState" : "SavedState";
         Plugin.Logger.LogInfo($"Online resume: starting from {which}");
@@ -83,5 +104,6 @@ internal static class OnlineResumePatch
         players.Add(new GameCode.ResumeSavedStateLocalMPPlayerData { PlayerIndex = 0, RWPlayerId = 0 });
         started = true;
         GameCode.Run(game.ResumeSavedStateCR(saved, players));
+        return true;
     }
 }
