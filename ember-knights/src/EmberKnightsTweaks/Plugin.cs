@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.kevin.emberknights.tweaks";
     public const string Name = "Ember Knights Tweaks";
-    public const string Version = "0.2.0";
+    public const string Version = "0.2.1";
 
     // Absolute Ambition, Pristine Band, Goliath Wargear, Call to Arms, Gilded Remains,
     // Titan's Wargear, Supreme Ambition, Spite Shield, Mimic King's Consort, Midas Mail
@@ -24,6 +24,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> OnlineSaveEnabled { get; private set; } = null!;
     internal static ConfigEntry<bool> OnlineResumeEnabled { get; private set; } = null!;
     internal static ConfigEntry<KeyCode> OnlineResumeKey { get; private set; } = null!;
+    internal static ConfigEntry<bool> AllowSoloOnline { get; private set; } = null!;
 
     public override void Load()
     {
@@ -37,6 +38,8 @@ public class Plugin : BasePlugin
         OnlineResumeEnabled = Config.Bind("OnlineRuns", "ResumeEnabled", true,
             "EXPERIMENTAL. In the online lobby, the host presses ResumeKey to resume the saved run.");
         OnlineResumeKey = Config.Bind("OnlineRuns", "ResumeKey", KeyCode.F9, "Hotkey for ResumeEnabled.");
+        AllowSoloOnline = Config.Bind("OnlineRuns", "AllowSoloOnline", true,
+            "Host can start an online run with nobody else in the lobby (for testing).");
 
         new Harmony(Guid).PatchAll(typeof(Plugin).Assembly);
         Logger.LogInfo($"{Name} {Version} loaded (favorites={FavoritesEnabled.Value}: {FavoriteRelics.Value})");
