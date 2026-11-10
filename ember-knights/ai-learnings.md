@@ -54,6 +54,9 @@
 - `UIMainMenu.ClickedResumeSingle`: takes `GameInst.CurrentSaveSlot.SavedState`, nulls it + saves, `DecodeData(World.GameMods)`,
   list of one `ResumeSavedStateLocalMPPlayerData { PlayerIndex 0, RWPlayerId 0 }`, `GameCode.Run(Game.ResumeSavedStateCR(...))`.
   `OnlineResumePatch` does the same from the online lobby (`UIPlayerSelectOnline.Tick`, host, F9) but keeps the save.
+- Solo online lobbies were blocked on purpose in hotfix 2.3.1 ("players could start online multiplayer lobbies by
+  themselves"): `UIPlayerSelectOnline.CanStartGame` returns Joined count > 1. `SoloOnlineLobbyPatch` (AllowSoloOnline)
+  undoes that for the host, for solo testing only; reason for the block is unknown, so turn it off for real runs.
 - Online start (`UIPlayerSelectOnline.StartGame_Internal`): host sends char data + save slot to all peers, then StartGameCR.
   Resume sends nothing to peers yet, so Bre has to come in through the rejoin path (step 3, untested).
 - ResumeSavedStateCR body (raw asm, Cpp2IL ISIL is empty): CommonStart_BeginLoadingCR, CreateNewPlayerSpawnData +
