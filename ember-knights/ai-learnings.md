@@ -44,7 +44,16 @@
 - Resume: `GameInst.ResumeSavedStateCR(sd, List<ResumeSavedStateLocalMPPlayerData>)` maps saved players to local Rewired ids,
   then `ResumeSavedState_PostFixupPlayers`. Loading goes through `CommonStart_BeginLoadingCR(area, fromReconnect, fromSaveState)`.
 
-## Online save / resume mod (v0.2.0, built 2026-11-09, untested)
+## Online save / resume mod (v0.3.0)
+- Verified 2026-11-09 (solo online): Save And Quit online writes `SavedState`; resuming from the online lobby put the host
+  back in the saved run. Rejoin by a second player (Bre) is still untested.
+- Hotkeys are unreliable: legacy `Input` saw other keys but never F9 (laptop Fn layer or Proton), so v0.3.0 uses a
+  cloned lobby button instead. Resume button = `Instantiate(Refs.HostStartGameButton.gameObject, same parent)`,
+  `SetText`, `onClick.RemoveAllListeners()`, `SetCallback(UnityAction)`; click sets a flag and calls
+  `HostStartGameClicked`, so the normal countdown runs, and the `StartGame_Internal` prefix resumes instead.
+  Controller navigation to the cloned button is not wired (explicit nav from `SetupNavigation`); mouse works.
+- A saved run has no player identity: `SavedStatePlayerData` = PlayerIndex, Difficulty, EasyModeDeathCounter,
+  WeaponChallengesData, WeaponDefId, ColorInfo. Matching saves to lobby members would need a mod-written sidecar.
 - `XNetworkBase.get_IsLocal` = `_connectionType` (0x58) is not Server(1)/Client(2). `OnlineSavePatch` sets it to None
   around `CanSaveState` / `GetSaveState` on the host only, then restores it. Not inlined (both are real calls).
 - CanSaveState's room rule: `currentRoomCMP` (World+0xB0) roomState (0x6C) == 116 or 7, or roomType (0x68) == 11.

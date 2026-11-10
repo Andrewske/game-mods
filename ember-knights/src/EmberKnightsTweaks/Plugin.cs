@@ -3,7 +3,6 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using UnityEngine;
 
 namespace EmberKnightsTweaks;
 
@@ -12,7 +11,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.kevin.emberknights.tweaks";
     public const string Name = "Ember Knights Tweaks";
-    public const string Version = "0.2.3";
+    public const string Version = "0.3.0";
 
     // Absolute Ambition, Pristine Band, Goliath Wargear, Call to Arms, Gilded Remains,
     // Titan's Wargear, Supreme Ambition, Spite Shield, Mimic King's Consort, Midas Mail
@@ -23,8 +22,6 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<string> FavoriteRelics { get; private set; } = null!;
     internal static ConfigEntry<bool> OnlineSaveEnabled { get; private set; } = null!;
     internal static ConfigEntry<bool> OnlineResumeEnabled { get; private set; } = null!;
-    internal static ConfigEntry<KeyCode> OnlineResumeKey { get; private set; } = null!;
-    internal static ConfigEntry<bool> ResumeOnStart { get; private set; } = null!;
     internal static ConfigEntry<bool> AllowSoloOnline { get; private set; } = null!;
 
     public override void Load()
@@ -37,15 +34,11 @@ public class Plugin : BasePlugin
         OnlineSaveEnabled = Config.Bind("OnlineRuns", "SaveEnabled", true,
             "EXPERIMENTAL. Host can Save And Quit an online run (pause menu > Main Menu).");
         OnlineResumeEnabled = Config.Bind("OnlineRuns", "ResumeEnabled", true,
-            "EXPERIMENTAL. In the online lobby, the host presses ResumeKey to resume the saved run.");
-        OnlineResumeKey = Config.Bind("OnlineRuns", "ResumeKey", KeyCode.F9, "Hotkey for ResumeEnabled.");
-        ResumeOnStart = Config.Bind("OnlineRuns", "ResumeOnStart", false,
-            "EXPERIMENTAL. When on, the host's Start button in the online lobby resumes the saved run instead of starting a new one.");
+            "EXPERIMENTAL. Adds a Resume button next to Start in the online lobby (host only).");
         AllowSoloOnline = Config.Bind("OnlineRuns", "AllowSoloOnline", true,
             "Host can start an online run with nobody else in the lobby (for testing).");
 
         new Harmony(Guid).PatchAll(typeof(Plugin).Assembly);
-        AddComponent<ResumeKeyWatcher>();
         Logger.LogInfo($"{Name} {Version} loaded (favorites={FavoritesEnabled.Value}: {FavoriteRelics.Value})");
     }
 }

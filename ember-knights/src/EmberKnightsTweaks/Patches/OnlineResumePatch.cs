@@ -1,53 +1,78 @@
 using System;
+using System.Text.RegularExpressions;
 using HarmonyLib;
+using Il2CppInterop.Runtime;
 using Il2CppSystem.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Events;
 
 namespace EmberKnightsTweaks.Patches;
 
-// The main menu only offers offline resumes. This adds a hotkey on the online lobby
-// (character select, host only) that does what UIMainMenu.ClickedResumeSingle does: decode the saved
-// run and start GameInst.ResumeSavedStateCR with the host as saved player 0.
-// Unlike the game, the save is NOT cleared on resume, so a failed attempt can be retried;
-// the next Save And Quit overwrites it.
-// Input is read by ResumeKeyWatcher every frame; this class only tracks the lobby screen
-// (SetContent runs when it opens, Tick while it is up) and performs the resume.
+// The main menu only offers offline resumes. This adds a "Resume" button next to Start in
+// the online lobby (host only). It goes through the normal start flow (CanStartGame,
+// countdown, StartGame) and only swaps the last step: instead of StartGame_Internal it does
+// what UIMainMenu.ClickedResumeSingle does, i.e. decode the saved run and start
+// GameInst.ResumeSavedStateCR with the host as saved player 0. Start still begins a fresh run.
+// Unlike the game, the save is NOT cleared on resume; the next Save And Quit overwrites it.
 internal static class OnlineResumePatch
 {
-    private static bool started;
-    private static GameCode.UIPlayerSelectOnline? lobby;
-    private static bool tickLogged;
+    private static UITinyButton? resumeButton;
+    private static bool resumeRequested;
+    private static IntPtr lastDecoded = IntPtr.Zero;
+
+    private static GameCode.SinglePlayerSavedState? SavedRun()
+    {
+        var slot = GameCode.Game?.CurrentSaveSlot;
+        var saved = slot == null ? null : slot.MultiplayerSavedState ?? slot.SavedState;
+        // DecodeData mutates the state, so the same object is never resumed twice.
+        return saved == null || saved.Pointer == lastDecoded ? null : saved;
+    }
+
+    private static bool IsHost => GameCode.XNetwork != null && GameCode.XNetwork.IsServer;
 
     [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.SetContent))]
-    internal static class TrackOpen
+    internal static class AddButton
     {
         private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
         {
-            lobby = __instance;
-            Plugin.Logger.LogInfo("Online lobby opened");
+            if (!Plugin.OnlineResumeEnabled.Value || !IsHost) return;
+            try
+            {
+                CreateButton(__instance);
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Online resume: could not add the Resume button: {e}");
+            }
         }
     }
 
+    // Keeps the button in step with Start (hidden/disabled during countdowns) and the save.
     [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.Tick))]
-    internal static class TrackTick
+    internal static class SyncButton
     {
         private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
         {
-            lobby = __instance;
-            if (tickLogged) return;
-            tickLogged = true;
-            Plugin.Logger.LogInfo("Online lobby Tick hook is running");
+            if (resumeButton == null || resumeButton.WasCollected) return;
+            var start = __instance.Refs.HostStartGameButton;
+            resumeButton.gameObject.SetActive(start.gameObject.activeSelf && SavedRun() != null);
+            resumeButton.interactable = start.interactable;
         }
     }
 
-    // Backup trigger that needs no keyboard: with ResumeOnStart on, the host's Start
-    // button resumes the saved run instead of starting a fresh one.
+    [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.CancelCountdown))]
+    internal static class Cancelled
+    {
+        private static void Postfix() => resumeRequested = false;
+    }
+
     [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.StartGame_Internal))]
-    internal static class ResumeOnStart
+    internal static class ResumeInsteadOfStart
     {
         private static bool Prefix(GameCode.UIPlayerSelectOnline __instance)
         {
-            if (!Plugin.OnlineResumeEnabled.Value || !Plugin.ResumeOnStart.Value || started) return true;
-            Plugin.Logger.LogInfo("Start pressed with ResumeOnStart on");
+            if (!resumeRequested) return true;
+            resumeRequested = false;
             try
             {
                 return !TryResume(__instance);
@@ -60,50 +85,53 @@ internal static class OnlineResumePatch
         }
     }
 
-    public static void OnHotkey()
+    private static void CreateButton(GameCode.UIPlayerSelectOnline lobby)
     {
-        var open = lobby != null && lobby.IsOpened;
-        Plugin.Logger.LogInfo($"Resume key pressed (lobby seen={lobby != null}, open={open})");
-        if (!Plugin.OnlineResumeEnabled.Value || !open) return;
-        if (started)
+        var start = lobby.Refs.HostStartGameButton;
+        if (resumeButton == null || resumeButton.WasCollected)
         {
-            // DecodeData already ran on the in-memory state; restart the game to retry cleanly.
-            Plugin.Logger.LogWarning("Online resume: already attempted this session; restart the game to try again");
-            return;
+            var copy = UnityEngine.Object.Instantiate(start.gameObject, start.transform.parent);
+            copy.name = "ResumeRunButton";
+            copy.transform.SetSiblingIndex(start.transform.GetSiblingIndex() + 1);
+            resumeButton = copy.GetComponent<UITinyButton>();
+            resumeButton.onClick.RemoveAllListeners();
+            resumeButton.SetCallback(DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => OnResumeClicked(lobby))));
         }
-        try
-        {
-            TryResume(lobby!);
-        }
-        catch (Exception e)
-        {
-            Plugin.Logger.LogError($"Online resume failed: {e}");
-        }
+        var saved = SavedRun();
+        resumeButton.SetText(saved == null ? "Resume" : $"Resume: {Pretty(saved.AreaName.ToString())}");
+        Plugin.Logger.LogInfo($"Online resume: button ready (saved run: {(saved == null ? "none" : saved.AreaName.ToString())})");
+    }
+
+    private static void OnResumeClicked(GameCode.UIPlayerSelectOnline lobby)
+    {
+        Plugin.Logger.LogInfo("Online resume: Resume clicked");
+        resumeRequested = true;
+        lobby.HostStartGameClicked();
     }
 
     private static bool TryResume(GameCode.UIPlayerSelectOnline lobby)
     {
-        var net = GameCode.XNetwork;
-        if (net == null || !net.IsServer)
+        if (!IsHost)
         {
             Plugin.Logger.LogWarning("Online resume: only the host can resume (not hosting a lobby)");
             return false;
         }
-        var game = GameCode.Game;
-        var slot = game.CurrentSaveSlot;
-        var saved = slot.MultiplayerSavedState ?? slot.SavedState;
+        var saved = SavedRun();
         if (saved == null)
         {
-            Plugin.Logger.LogWarning("Online resume: no saved run in this save slot");
+            Plugin.Logger.LogWarning("Online resume: no saved run in this save slot (or already resumed this session)");
             return false;
         }
+        var slot = GameCode.Game.CurrentSaveSlot;
         var which = slot.MultiplayerSavedState != null ? "MultiplayerSavedState" : "SavedState";
-        Plugin.Logger.LogInfo($"Online resume: starting from {which}");
+        Plugin.Logger.LogInfo($"Online resume: starting from {which} ({saved.AreaName})");
+        lastDecoded = saved.Pointer;
         saved.DecodeData(lobby.World.GameMods);
         var players = new List<GameCode.ResumeSavedStateLocalMPPlayerData>();
         players.Add(new GameCode.ResumeSavedStateLocalMPPlayerData { PlayerIndex = 0, RWPlayerId = 0 });
-        started = true;
-        GameCode.Run(game.ResumeSavedStateCR(saved, players));
+        GameCode.Run(GameCode.Game.ResumeSavedStateCR(saved, players));
         return true;
     }
+
+    private static string Pretty(string area) => Regex.Replace(area.Replace('_', ' '), "(?<=[a-z])(?=[A-Z])", " ");
 }
