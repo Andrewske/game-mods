@@ -51,7 +51,8 @@
   cloned lobby button instead. Resume button = `Instantiate(Refs.HostStartGameButton.gameObject, same parent)`,
   `SetText`, `onClick.RemoveAllListeners()`, `SetCallback(UnityAction)`; click sets a flag and calls
   `HostStartGameClicked`, so the normal countdown runs, and the `StartGame_Internal` prefix resumes instead.
-  Controller navigation to the cloned button is not wired (explicit nav from `SetupNavigation`); mouse works.
+  The copy keeps Start's selected look (call `OnDeselect`), and `SetupNavigation` wires explicit Unity navigation
+  Start <-> Invite, so a postfix splices Start <-> Resume <-> next (v0.3.1, untested).
 - A saved run has no player identity: `SavedStatePlayerData` = PlayerIndex, Difficulty, EasyModeDeathCounter,
   WeaponChallengesData, WeaponDefId, ColorInfo. Matching saves to lobby members would need a mod-written sidecar.
 - `XNetworkBase.get_IsLocal` = `_connectionType` (0x58) is not Server(1)/Client(2). `OnlineSavePatch` sets it to None

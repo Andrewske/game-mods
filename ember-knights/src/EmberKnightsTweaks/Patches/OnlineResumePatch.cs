@@ -5,6 +5,8 @@ using Il2CppInterop.Runtime;
 using Il2CppSystem.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace EmberKnightsTweaks.Patches;
 
@@ -55,9 +57,47 @@ internal static class OnlineResumePatch
         {
             if (resumeButton == null || resumeButton.WasCollected) return;
             var start = __instance.Refs.HostStartGameButton;
-            resumeButton.gameObject.SetActive(start.gameObject.activeSelf && SavedRun() != null);
+            var visible = start.gameObject.activeSelf && SavedRun() != null;
             resumeButton.interactable = start.interactable;
+            if (visible == resumeButton.gameObject.activeSelf) return;
+            resumeButton.gameObject.SetActive(visible);
+            __instance.SetupNavigation(); // the postfix below splices Resume back in when visible
         }
+    }
+
+    // SetupNavigation links the lobby buttons explicitly (Start <-> Invite Friends), so a copied
+    // button is unreachable by controller until it is spliced in: Start <-> Resume <-> next.
+    [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.SetupNavigation))]
+    internal static class SpliceNavigation
+    {
+        private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
+        {
+            if (resumeButton == null || resumeButton.WasCollected || !resumeButton.gameObject.activeSelf) return;
+            try
+            {
+                Splice(__instance.Refs.HostStartGameButton, resumeButton);
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Online resume: navigation splice failed: {e}");
+            }
+        }
+    }
+
+    private static void Splice(Selectable start, Selectable resume)
+    {
+        var startNav = start.navigation;
+        var next = startNav.selectOnRight;
+        var resumeNav = startNav;
+        resumeNav.selectOnLeft = start;
+        resumeNav.selectOnRight = next;
+        resume.navigation = resumeNav;
+        startNav.selectOnRight = resume;
+        start.navigation = startNav;
+        if (next == null) return;
+        var nextNav = next.navigation;
+        if (nextNav.selectOnLeft != null && nextNav.selectOnLeft.Pointer == start.Pointer) nextNav.selectOnLeft = resume;
+        next.navigation = nextNav;
     }
 
     [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.CancelCountdown))]
@@ -96,6 +136,9 @@ internal static class OnlineResumePatch
             resumeButton = copy.GetComponent<UITinyButton>();
             resumeButton.onClick.RemoveAllListeners();
             resumeButton.SetCallback(DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => OnResumeClicked(lobby))));
+            // The copy is made while Start is selected and keeps that look until told otherwise.
+            resumeButton.OnDeselect(new BaseEventData(EventSystem.current));
+            lobby.SetupNavigation();
         }
         var saved = SavedRun();
         resumeButton.SetText(saved == null ? "Resume" : $"Resume: {Pretty(saved.AreaName.ToString())}");
