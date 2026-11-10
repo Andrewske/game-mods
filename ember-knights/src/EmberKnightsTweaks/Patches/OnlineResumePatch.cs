@@ -5,7 +5,6 @@ using Il2CppInterop.Runtime;
 using Il2CppSystem.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace EmberKnightsTweaks.Patches;
@@ -136,8 +135,11 @@ internal static class OnlineResumePatch
             resumeButton = copy.GetComponent<UITinyButton>();
             resumeButton.onClick.RemoveAllListeners();
             resumeButton.SetCallback(DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => OnResumeClicked(lobby))));
-            // The copy is made while Start is selected and keeps that look until told otherwise.
-            resumeButton.OnDeselect(new BaseEventData(EventSystem.current));
+            // SetContent runs Initialize on every button in Refs.AllButtons, which plays the default
+            // animation and hooks select/deselect to the highlight; the copy needs the same.
+            var anim = copy.GetComponent<UIOptionsButtonRefs>() ?? copy.GetComponentInChildren<UIOptionsButtonRefs>();
+            if (anim != null) anim.Initialize();
+            else Plugin.Logger.LogWarning("Online resume: no UIOptionsButtonRefs on the copied button; highlight may stick");
             lobby.SetupNavigation();
         }
         var saved = SavedRun();

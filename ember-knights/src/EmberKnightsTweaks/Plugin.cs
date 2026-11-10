@@ -11,7 +11,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.kevin.emberknights.tweaks";
     public const string Name = "Ember Knights Tweaks";
-    public const string Version = "0.3.1";
+    public const string Version = "0.3.2";
 
     // Absolute Ambition, Pristine Band, Goliath Wargear, Call to Arms, Gilded Remains,
     // Titan's Wargear, Supreme Ambition, Spite Shield, Mimic King's Consort, Midas Mail
