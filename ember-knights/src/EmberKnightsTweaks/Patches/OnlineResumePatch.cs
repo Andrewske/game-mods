@@ -5,18 +5,45 @@ using Il2CppSystem.Collections.Generic;
 namespace EmberKnightsTweaks.Patches;
 
 // The main menu only offers offline resumes. This adds a hotkey on the online lobby
-// (host only) that does what UIMainMenu.ClickedResumeSingle does: decode the saved
+// (character select, host only) that does what UIMainMenu.ClickedResumeSingle does: decode the saved
 // run and start GameInst.ResumeSavedStateCR with the host as saved player 0.
 // Unlike the game, the save is NOT cleared on resume, so a failed attempt can be retried;
 // the next Save And Quit overwrites it.
-[HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.Tick))]
+// Input is read by ResumeKeyWatcher every frame; this class only tracks the lobby screen
+// (SetContent runs when it opens, Tick while it is up) and performs the resume.
 internal static class OnlineResumePatch
 {
     private static bool started;
+    private static GameCode.UIPlayerSelectOnline? lobby;
+    private static bool tickLogged;
 
-    private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
+    [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.SetContent))]
+    internal static class TrackOpen
     {
-        if (!Plugin.OnlineResumeEnabled.Value || !Hotkey.WasPressed(Plugin.OnlineResumeKey.Value)) return;
+        private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
+        {
+            lobby = __instance;
+            Plugin.Logger.LogInfo("Online lobby opened");
+        }
+    }
+
+    [HarmonyPatch(typeof(GameCode.UIPlayerSelectOnline), nameof(GameCode.UIPlayerSelectOnline.Tick))]
+    internal static class TrackTick
+    {
+        private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
+        {
+            lobby = __instance;
+            if (tickLogged) return;
+            tickLogged = true;
+            Plugin.Logger.LogInfo("Online lobby Tick hook is running");
+        }
+    }
+
+    public static void OnHotkey()
+    {
+        var open = lobby != null && lobby.IsOpened;
+        Plugin.Logger.LogInfo($"Resume key pressed (lobby seen={lobby != null}, open={open})");
+        if (!Plugin.OnlineResumeEnabled.Value || !open) return;
         if (started)
         {
             // DecodeData already ran on the in-memory state; restart the game to retry cleanly.
@@ -25,11 +52,11 @@ internal static class OnlineResumePatch
         }
         try
         {
-            TryResume(__instance);
+            TryResume(lobby!);
         }
         catch (Exception e)
         {
-            Plugin.Logger.LogError($"OnlineResumePatch failed: {e}");
+            Plugin.Logger.LogError($"Online resume failed: {e}");
         }
     }
 

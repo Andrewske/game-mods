@@ -13,7 +13,11 @@ internal static class Hotkey
         if (!legacyBroken)
         {
             try { return Input.GetKeyDown(key); }
-            catch (Exception) { legacyBroken = true; }
+            catch (Exception e)
+            {
+                legacyBroken = true;
+                Plugin.Logger.LogInfo($"Legacy Unity input unavailable, using Input System ({e.GetType().Name})");
+            }
         }
         var keyboard = UnityEngine.InputSystem.Keyboard.current;
         var control = keyboard == null ? null : keyboard.FindKeyOnCurrentKeyboardLayout(key.ToString());

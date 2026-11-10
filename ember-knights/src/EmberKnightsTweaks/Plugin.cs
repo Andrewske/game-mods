@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.kevin.emberknights.tweaks";
     public const string Name = "Ember Knights Tweaks";
-    public const string Version = "0.2.1";
+    public const string Version = "0.2.2";
 
     // Absolute Ambition, Pristine Band, Goliath Wargear, Call to Arms, Gilded Remains,
     // Titan's Wargear, Supreme Ambition, Spite Shield, Mimic King's Consort, Midas Mail
@@ -42,6 +42,7 @@ public class Plugin : BasePlugin
             "Host can start an online run with nobody else in the lobby (for testing).");
 
         new Harmony(Guid).PatchAll(typeof(Plugin).Assembly);
+        AddComponent<ResumeKeyWatcher>();
         Logger.LogInfo($"{Name} {Version} loaded (favorites={FavoritesEnabled.Value}: {FavoriteRelics.Value})");
     }
 }
