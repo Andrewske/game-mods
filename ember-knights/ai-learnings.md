@@ -120,3 +120,15 @@
   sees the same items and can buy them; queue resets next run.
 - Relic names: `data/relic-names.tsv` (131 relics), from the English table in resources.assets (`relic_name_<defId>`,
   find it via `\nui_common_quit;Quit\r\n`; rows end in CRLF). IDs match the values in the save's `relicUnlocks`.
+
+## Online resume with a second player (v0.4.0, untested)
+- First 2-player test of v0.3.2: the host loaded the save, then hung in `SpawnAreaCR` -> `NET_SyncStartAreaDataCR`. The client sat at countdown "1" because resume skips `StartGame_Internal`, which is what sends the start packet (and rolls `XNetworkSYS.GameId` at 0x128, and sets the lobby "in progress" on the web API).
+- Host sync waits (`XNetworkSYS.TickWaitNetSyncFlag`, `NetWaitForAllLoadingCR`) only count `XNetPlayerData.IsConnected` (connectionState 0x4C == Connected 5). Players in other states are skipped.
+- Mid-run join (`HandlePacket_C2S_JoinRequest`, if `SERVER_GameStarted` 0xAC): request GameId must equal host GameId, and the PlatformId must be in `allPlayerStates` (0x108). Then it sets the state to Reconnecting (2), or to ReconnectWaitingForNextArea (4) plus `PlayersWaitingForNextArea` while loading. It sends `NET_SendPlayerConnectionStateUpdate`, sets lastAckedSnapshotId (0x88) to -1, and calls `SendInitialRejoinData(peer, clientFrame, idx, inEnterTear)`.
+- Client `Handle_S2C_InitialRejoinData` only checks IsClient, then runs `GameInst.RejoinGameCR`. No lobby-state guard, so the host can push it to a client still sitting in the lobby.
+- The ClientFrame arg is the first UInt64 of the client's join request (`GameEngine.Instance.CurrentFrame` on the client). The client uses it to estimate latency.
+- The main-menu Rejoin button shows for 10 minutes after a disconnect (`SavedPlayerSlot.LastConnectedHost*`, 0x70-0x90).
+- v0.4.0 (`OnlineRejoinPushPatch`):
+  - Before resume, marks lobby peers state 4 and sets SERVER_GameStarted and a new GameId.
+  - Once resume finishes (the `GameUI.ShowHud` postfix, the last call in ResumeSavedStateCR), pushes rejoin data to each peer.
+  - The client frame is captured in a JoinRequest prefix that reads ahead in the XByteReader (Position 0x18), then aged by host frames.

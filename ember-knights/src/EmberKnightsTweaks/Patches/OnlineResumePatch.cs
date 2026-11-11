@@ -174,6 +174,7 @@ internal static class OnlineResumePatch
         saved.DecodeData(lobby.World.GameMods);
         var players = new List<GameCode.ResumeSavedStateLocalMPPlayerData>();
         players.Add(new GameCode.ResumeSavedStateLocalMPPlayerData { PlayerIndex = 0, RWPlayerId = 0 });
+        OnlineRejoinPushPatch.HoldLobbyPeers();
         GameCode.Run(GameCode.Game.ResumeSavedStateCR(saved, players));
         return true;
     }
