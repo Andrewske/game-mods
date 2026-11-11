@@ -76,6 +76,7 @@ internal static class OnlineRejoinPushPatch
             OnlineResumeGuardPatch.StopBlocking();
             var players = pending.ToArray();
             pending.Clear();
+            SyncNetIds();
             foreach (var p in players)
             {
                 try
@@ -87,6 +88,26 @@ internal static class OnlineRejoinPushPatch
                     Plugin.Logger.LogError($"Online resume: rejoin push to player {p.playerIndex} failed: {e}");
                 }
             }
+        }
+    }
+
+    // The rejoining client spawns every player with XNetPlayerData.NetId (RejoinGameCR), and an
+    // entity spawned with NetId 0 gets no XNetCMP, so XPlayerSYS.Net_SendPlayerStateChange throws
+    // every frame (test 6: her movement never reached the host, she never saw his). StartGameCR
+    // records the NetIds; ResumeSavedStateCR spawns players with NetId = index + 1 but leaves the
+    // net player list as the lobby set it, so copy the real ids over.
+    private static void SyncNetIds()
+    {
+        var world = GameCode.Game.World;
+        foreach (var p in GameCode.Game.NetworkSYS.allPlayerStates)
+        {
+            if (p == null) continue;
+            var entity = world.GetPlayerByPlayerIndex(p.playerIndex);
+            if (!entity.IsValidEX()) continue;
+            var netId = world.GetNetIdForEntityId(entity.Id);
+            if (netId == p.NetId) continue;
+            Plugin.Logger.LogInfo($"Online resume: player {p.playerIndex} NetId {p.NetId} -> {netId}");
+            p.NetId = netId;
         }
     }
 
