@@ -62,6 +62,25 @@ internal static class OnlineRejoinPushPatch
         OnlineResumeGuardPatch.Begin(held);
     }
 
+    // Room objects (props, doors, chests, room NPCs) get their NetIds from a running counter while
+    // SpawnFloorCR walks the rooms, and what it spawns depends on FromReconnect and sd. The host's
+    // resume calls it with (false, saved run); the rejoining client with (true, null). Test 9: host
+    // ended generation at NetId 730, client at 843, so the client's hits on vases/eggs named the
+    // wrong entities and some snapshots failed to parse. While peers are held, build the host's
+    // area the client's way. The saved current room is still instantiated by Deserialize_RejoinData
+    // with its saved BeginningNetId, exactly as on the client.
+    [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.SpawnFloorCR))]
+    internal static class BuildAreaLikeTheClient
+    {
+        private static void Prefix(ref bool FromReconnect, ref GameCode.SinglePlayerSavedState sd)
+        {
+            if (resumeCR == null || pending.Count == 0) return;
+            Plugin.Logger.LogInfo($"Online resume: building the area the rejoin way (FromReconnect {FromReconnect} -> True, saved run {(sd == null ? "none" : "dropped")})");
+            FromReconnect = true;
+            sd = null;
+        }
+    }
+
     // The compiler-generated iterator keeps its state at 0x10: 0 before the first step, >= 0 while
     // suspended, -1 once MoveNext has returned false. Outside MoveNext, < 0 means finished.
     // (GameUI.ShowHud was tried as the trigger, but it fires before the players spawn.)
