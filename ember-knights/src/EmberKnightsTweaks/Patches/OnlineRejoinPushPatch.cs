@@ -23,7 +23,7 @@ namespace EmberKnightsTweaks.Patches;
 internal static class OnlineRejoinPushPatch
 {
     private static readonly System.Collections.Generic.HashSet<int> awaitingPreload = new();
-    private static bool openDoorsOwed;
+    private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> awaitingConnected = new();
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
     private static Il2CppSystem.Collections.IEnumerator? resumeCR;
 
@@ -44,7 +44,7 @@ internal static class OnlineRejoinPushPatch
     {
         pending.Clear();
         awaitingPreload.Clear();
-        openDoorsOwed = true;
+        awaitingConnected.Clear();
         resumeCR = cr;
         var net = GameCode.Game?.NetworkSYS;
         if (net == null) return;
@@ -73,6 +73,7 @@ internal static class OnlineRejoinPushPatch
     {
         private static void Postfix()
         {
+            WatchForConnected();
             if (!ResumeFinished) return;
             resumeCR = null;
             OnlineResumeGuardPatch.StopBlocking();
@@ -131,6 +132,7 @@ internal static class OnlineRejoinPushPatch
         p.lastAckedSnapshotId = -1;
         net.SendInitialRejoinData(p.netPeer, frame, p.playerIndex, false, false);
         awaitingPreload.Add(p.playerIndex);
+        awaitingConnected.Add(p);
         Plugin.Logger.LogInfo($"Online resume: sent rejoin data to peer {p.netPeer.Id} (player {p.playerIndex}, client frame ~{frame}, entity {(hasEntity ? "present" : "missing")}, {GameCode.Game.World.AllPlayers.Count} players in world)");
     }
 
@@ -164,34 +166,43 @@ internal static class OnlineRejoinPushPatch
     // The room's OpenDoors change goes out once, from XRoomSYS.TickCompleted, when it first opens
     // the doors. On a resume that happens while the peer is still parked in the lobby, so their
     // copy of the room stays shut (test 7: exit highlighted for the host, blocked for the client).
-    // Resend it once the rejoin is done.
-    [HarmonyPatch(typeof(GameCode.XNetworkSYS), "Handle_C2S_RejoinDone")]
-    internal static class ResendOpenDoors
+    // The client's handler opens the current room's doors on it unconditionally, so it is resent
+    // once the peer is Connected. Handle_C2S_RejoinDone is inlined into OnNetworkReceive (test 8:
+    // a postfix on it never ran), so this watches the connection state from the frame hook.
+    private static void WatchForConnected()
     {
-        private static void Postfix()
+        if (awaitingConnected.Count == 0) return;
+        var connected = false;
+        for (var i = awaitingConnected.Count - 1; i >= 0; i--)
         {
-            if (!openDoorsOwed) return;
-            openDoorsOwed = false;
-            try
+            var state = awaitingConnected[i].connectionState;
+            if (state == ConnState.Connected) connected = true;
+            if (state == ConnState.Connected || state == ConnState.Disconnected) awaitingConnected.RemoveAt(i);
+        }
+        if (connected) ResendOpenDoors();
+    }
+
+    private static void ResendOpenDoors()
+    {
+        try
+        {
+            var room = GameCode.Game.World.currentRoomCMP;
+            if (room == null || !room.OpenedDoors)
             {
-                var room = GameCode.Game.World.currentRoomCMP;
-                if (room == null || !room.OpenedDoors)
-                {
-                    Plugin.Logger.LogInfo("Online resume: current room's doors aren't open yet; the game will send that itself");
-                    return;
-                }
-                var data = new GameCode.XRoomSYS.RoomStateChangeData_t
-                {
-                    RoomInstId = room.RoomInstId,
-                    type = GameCode.XRoomSYS.eRoomStateChangeType.OpenDoors,
-                };
-                GameCode.XRoomSYS.NET_SendRoomStateChange(data);
-                Plugin.Logger.LogInfo($"Online resume: resent OpenDoors for room {room.RoomInstId}");
+                Plugin.Logger.LogInfo("Online resume: current room's doors aren't open yet; the game will send that itself");
+                return;
             }
-            catch (Exception e)
+            var data = new GameCode.XRoomSYS.RoomStateChangeData_t
             {
-                Plugin.Logger.LogError($"Online resume: could not resend OpenDoors: {e}");
-            }
+                RoomInstId = room.RoomInstId,
+                type = GameCode.XRoomSYS.eRoomStateChangeType.OpenDoors,
+            };
+            GameCode.XRoomSYS.NET_SendRoomStateChange(data);
+            Plugin.Logger.LogInfo($"Online resume: resent OpenDoors for room {room.RoomInstId}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogError($"Online resume: could not resend OpenDoors: {e}");
         }
     }
 }
