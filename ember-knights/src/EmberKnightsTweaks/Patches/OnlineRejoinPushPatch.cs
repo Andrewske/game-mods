@@ -12,36 +12,21 @@ namespace EmberKnightsTweaks.Patches;
 //      The host's sync waits only count Connected players, so loading no longer blocks.
 //   2. When the resume coroutine has finished, each peer gets what HandlePacket_C2S_JoinRequest
 //      sends a reconnecting player: state Reconnecting, then SendInitialRejoinData. The client
-//      runs RejoinGameCR and reports back through the normal rejoin packets.
-// SendInitialRejoinData wants the client's current frame (the client uses it to estimate latency).
-// Clients send their frame first in the join request, so it is captured there and aged by the
-// frames the host has run since.
+//      runs RejoinGameCR and answers C2S_RejoinPreloadDone (host sets ReconnectLoadingDone).
+//   3. Natively the host only sends the final Send_RejoinData during the next transition (door,
+//      area loading, teleport). A resumed peer's character is standing in the room, so the host
+//      can't get through a door and that never happens. The client's S2C_RejoinData handler
+//      doesn't need a transition, so it is sent right after the preload ack instead.
+// ClientFrame (used by the client to estimate latency): once the client has had AllPlayersReady
+// its frame counter follows the server's, so the host frame is the right value. Aging the frame
+// from the join request was wrong (test 5: calculatedServerFrame -8677).
 internal static class OnlineRejoinPushPatch
 {
-    private static readonly System.Collections.Generic.Dictionary<int, (long client, long host)> joinFrames = new();
+    private static readonly System.Collections.Generic.HashSet<int> awaitingPreload = new();
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
     private static Il2CppSystem.Collections.IEnumerator? resumeCR;
 
     private static long HostFrame => GameEngine.Instance == null ? 0 : GameEngine.Instance.CurrentFrame;
-
-    [HarmonyPatch(typeof(GameCode.XNetworkSYS), "HandlePacket_C2S_JoinRequest")]
-    internal static class CaptureClientFrame
-    {
-        private static void Prefix(XNetworkPeer peer, XByteReader reader)
-        {
-            try
-            {
-                var at = reader.Position;
-                var clientFrame = (long)reader.ReadUInt64();
-                reader.Position = at;
-                joinFrames[peer.Id] = (clientFrame, HostFrame);
-            }
-            catch (Exception e)
-            {
-                Plugin.Logger.LogWarning($"Online resume: could not read the joining client's frame: {e.Message}");
-            }
-        }
-    }
 
     internal static System.Collections.Generic.List<int> LobbyPeerIndexes()
     {
@@ -57,6 +42,7 @@ internal static class OnlineRejoinPushPatch
     internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
     {
         pending.Clear();
+        awaitingPreload.Clear();
         resumeCR = cr;
         var net = GameCode.Game?.NetworkSYS;
         if (net == null) return;
@@ -115,18 +101,39 @@ internal static class OnlineRejoinPushPatch
         // The join handler sends rejoin data whether or not the player's entity still exists
         // (a disconnected player's entity can be cleaned up); the rejoin flow rebuilds it.
         var hasEntity = GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX();
-        var frame = EstimateClientFrame(p.netPeer.Id);
+        var frame = HostFrame;
         p.connectionState = ConnState.Reconnecting;
         net.NET_SendPlayerConnectionStateUpdate(p.playerIndex, ConnState.Reconnecting, false);
         p.lastAckedSnapshotId = -1;
         net.SendInitialRejoinData(p.netPeer, frame, p.playerIndex, false, false);
+        awaitingPreload.Add(p.playerIndex);
         Plugin.Logger.LogInfo($"Online resume: sent rejoin data to peer {p.netPeer.Id} (player {p.playerIndex}, client frame ~{frame}, entity {(hasEntity ? "present" : "missing")}, {GameCode.Game.World.AllPlayers.Count} players in world)");
     }
 
-    private static long EstimateClientFrame(int peerId)
+    [HarmonyPatch(typeof(GameCode.XNetworkSYS), "Handle_C2S_RejoinPreloadDone")]
+    internal static class SendRejoinDataNow
     {
-        if (joinFrames.TryGetValue(peerId, out var f)) return f.client + (HostFrame - f.host);
-        Plugin.Logger.LogWarning($"Online resume: no join frame for peer {peerId}; using the host frame");
-        return HostFrame;
+        private static void Postfix(GameCode.XNetworkSYS __instance)
+        {
+            if (awaitingPreload.Count == 0) return;
+            var ready = new Il2CppSystem.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData>();
+            foreach (var p in __instance.allPlayerStates)
+            {
+                if (p == null || !awaitingPreload.Contains(p.playerIndex)) continue;
+                if (p.connectionState != ConnState.ReconnectLoadingDone) continue;
+                awaitingPreload.Remove(p.playerIndex);
+                ready.Add(p);
+            }
+            if (ready.Count == 0) return;
+            try
+            {
+                GameCode.XNetworkSYS.Send_RejoinData(GameCode.Game.World, ready);
+                Plugin.Logger.LogInfo($"Online resume: sent the final rejoin data to {ready.Count} player(s) without waiting for a transition");
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Online resume: Send_RejoinData failed: {e}");
+            }
+        }
     }
 }
