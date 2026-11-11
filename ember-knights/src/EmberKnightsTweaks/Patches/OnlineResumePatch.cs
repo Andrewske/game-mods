@@ -127,6 +127,7 @@ internal static class OnlineResumePatch
             if (!resumeRequested)
             {
                 ResumedRunRejoinPatch.ResumedSession = false; // a normal start sends its own GameId
+                OnlineRejoinPushPatch.Reset();
                 return true;
             }
             resumeRequested = false;

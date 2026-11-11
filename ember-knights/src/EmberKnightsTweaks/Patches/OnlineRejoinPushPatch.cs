@@ -26,6 +26,11 @@ internal static class OnlineRejoinPushPatch
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> awaitingConnected = new();
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
     private static Il2CppSystem.Collections.IEnumerator? resumeCR;
+    private static DateTime resumeStarted;
+    // A resume that never finishes (host quit to menu mid-load, the coroutine threw or was stopped)
+    // would leave resumeCR set forever, and BuildAreaLikeTheClient would then misbuild the next
+    // normal start. Loading takes seconds, so give up after this.
+    private static readonly TimeSpan ResumeTimeout = TimeSpan.FromMinutes(3);
 
     private static long HostFrame => GameEngine.Instance == null ? 0 : GameEngine.Instance.CurrentFrame;
 
@@ -39,13 +44,23 @@ internal static class OnlineRejoinPushPatch
         return indexes;
     }
 
-    // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
-    internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
+    // Drops all resume bookkeeping. Called when a normal run starts and when a resume times out.
+    internal static void Reset()
     {
+        if (resumeCR != null || pending.Count > 0) Plugin.Logger.LogInfo("Online resume: clearing leftover resume state");
         pending.Clear();
         awaitingPreload.Clear();
         awaitingConnected.Clear();
+        resumeCR = null;
+        OnlineResumeGuardPatch.StopBlocking();
+    }
+
+    // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
+    internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
+    {
+        Reset();
         resumeCR = cr;
+        resumeStarted = DateTime.UtcNow;
         var net = GameCode.Game?.NetworkSYS;
         if (net == null) return;
         net.SERVER_GameStarted = true;
@@ -93,6 +108,12 @@ internal static class OnlineRejoinPushPatch
         private static void Postfix()
         {
             WatchForConnected();
+            if (resumeCR != null && DateTime.UtcNow - resumeStarted > ResumeTimeout)
+            {
+                Plugin.Logger.LogWarning("Online resume: the resume never finished; giving up on bringing peers in");
+                Reset();
+                return;
+            }
             if (!ResumeFinished) return;
             resumeCR = null;
             OnlineResumeGuardPatch.StopBlocking();

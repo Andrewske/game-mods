@@ -159,3 +159,4 @@
 - v0.5.1:
   - `ResumedRunRejoinPatch`: a prefix on HandlePacket_C2S_JoinRequest (a real call, not inlined) reads ahead in the request (UInt64 frame + JoinGameRequestData, then rewinds Position). During a resumed session, if the PlatformId belongs to a player in allPlayerStates who isn't Connected, it sets XNetworkSYS.GameId to the request's GameId so the native rejoin check passes.
   - The Resume button shows the save's player count "(2P)" and is disabled unless the lobby has exactly that many players.
+- v0.5.2 (from my own review): `OnlineRejoinPushPatch.Reset()` runs on a normal start (the non-resume branch of the StartGame_Internal prefix), and also when a resume hasn't finished within 3 minutes. Without it, an aborted resume left resumeCR set, and the SpawnFloorCR prefix would have built the next normal start's area the rejoin way.
