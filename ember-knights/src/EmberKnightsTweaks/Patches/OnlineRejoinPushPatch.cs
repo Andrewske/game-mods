@@ -43,6 +43,16 @@ internal static class OnlineRejoinPushPatch
         }
     }
 
+    internal static System.Collections.Generic.List<int> LobbyPeerIndexes()
+    {
+        var indexes = new System.Collections.Generic.List<int>();
+        var net = GameCode.Game?.NetworkSYS;
+        if (net == null) return indexes;
+        foreach (var p in net.allPlayerStates)
+            if (p != null && p.netPeer != null && p.playerIndex != 0) indexes.Add(p.playerIndex);
+        return indexes;
+    }
+
     // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
     internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
     {

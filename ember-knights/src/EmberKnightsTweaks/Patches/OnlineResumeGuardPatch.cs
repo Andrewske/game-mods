@@ -4,17 +4,16 @@ using UnityEngine;
 
 namespace EmberKnightsTweaks.Patches;
 
-// Test 4 of the 2-player resume: the save holds both players and ResumeSavedStateCR spawns both,
-// but by the time the run has loaded the held peer's player entity is gone, so the rejoining
-// client arrives with no character. The code path that removes it isn't clear from the decomp,
-// so while a resume is in progress this guards the held players' entities on every removal path
-// found (disconnect handling, the pending-cleanup list, the world's entity lists). It logs which
-// one fired. Debug.LogError also puts the Unity stack trace in Player.log.
+// Diagnostics for the 2-player resume: logs (Debug.LogError adds the Unity stack trace in
+// Player.log) whenever a held lobby peer's player entity is removed during or after the resume.
+// It found that ResumeSavedStateCR itself disposes restored players missing from JoinedPlayers;
+// blocking that froze the loading, so it only watches now. Set WatchOnly = false to block again.
 internal static class OnlineResumeGuardPatch
 {
     private static readonly System.Collections.Generic.HashSet<int> heldIndexes = new();
     private static readonly System.Collections.Generic.Dictionary<IntPtr, int> heldEntities = new();
     private static bool active;
+    private const bool WatchOnly = true;
     private static bool logOnly; // after the rejoin push the native flow owns the entity; just watch
 
     internal static void Begin(System.Collections.Generic.IEnumerable<int> playerIndexes)
@@ -23,7 +22,7 @@ internal static class OnlineResumeGuardPatch
         heldEntities.Clear();
         foreach (var i in playerIndexes) heldIndexes.Add(i);
         active = heldIndexes.Count > 0;
-        logOnly = false;
+        logOnly = WatchOnly;
     }
 
     // Stops blocking once the rejoin data is sent, but keeps reporting removals for this run.

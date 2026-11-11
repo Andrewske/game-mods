@@ -174,6 +174,10 @@ internal static class OnlineResumePatch
         saved.DecodeData(lobby.World.GameMods);
         var players = new List<GameCode.ResumeSavedStateLocalMPPlayerData>();
         players.Add(new GameCode.ResumeSavedStateLocalMPPlayerData { PlayerIndex = 0, RWPlayerId = 0 });
+        // ResumeSavedStateCR disposes every restored player with no entry here (a local co-op player
+        // who didn't come back), so lobby peers need one too. RWPlayerId -1 = not a local controller.
+        foreach (var index in OnlineRejoinPushPatch.LobbyPeerIndexes())
+            players.Add(new GameCode.ResumeSavedStateLocalMPPlayerData { PlayerIndex = index, RWPlayerId = -1 });
         var cr = GameCode.Game.ResumeSavedStateCR(saved, players);
         OnlineRejoinPushPatch.HoldLobbyPeers(cr);
         GameCode.Run(cr);
