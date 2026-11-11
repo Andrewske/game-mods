@@ -132,3 +132,4 @@
   - Before resume, marks lobby peers state 4 and sets SERVER_GameStarted and a new GameId.
   - Once resume finishes, pushes rejoin data to each peer. v0.4.0 used a `GameUI.ShowHud` postfix as the trigger, but ShowHud also fires before the players spawn, so the push found no player 1. v0.4.1 polls the iterator state at 0x10 (< 0 means finished) from a `GameInst.GameFixedUpdate` postfix.
   - The client frame is captured in a JoinRequest prefix that reads ahead in the XByteReader (Position 0x18), then aged by host frames.
+- v0.4.1 test: the MP save holds 2 `AllPlayerData` entries, and resume spawns both, but by the end only 1 player is in `World.AllPlayers`. Something drops the held peer's entity. The native join handler doesn't require the entity (it only resets input when the entity exists), so v0.4.2 pushes anyway and logs whether the entity is there.

@@ -98,17 +98,15 @@ internal static class OnlineRejoinPushPatch
             Plugin.Logger.LogWarning($"Online resume: player {p.playerIndex} left during loading");
             return;
         }
-        if (!GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX())
-        {
-            Plugin.Logger.LogWarning($"Online resume: the saved run has no player {p.playerIndex} ({GameCode.Game.World.AllPlayers.Count} players in the world); that peer stays in limbo");
-            return;
-        }
+        // The join handler sends rejoin data whether or not the player's entity still exists
+        // (a disconnected player's entity can be cleaned up); the rejoin flow rebuilds it.
+        var hasEntity = GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX();
         var frame = EstimateClientFrame(p.netPeer.Id);
         p.connectionState = ConnState.Reconnecting;
         net.NET_SendPlayerConnectionStateUpdate(p.playerIndex, ConnState.Reconnecting, false);
         p.lastAckedSnapshotId = -1;
         net.SendInitialRejoinData(p.netPeer, frame, p.playerIndex, false, false);
-        Plugin.Logger.LogInfo($"Online resume: sent rejoin data to peer {p.netPeer.Id} (player {p.playerIndex}, client frame ~{frame})");
+        Plugin.Logger.LogInfo($"Online resume: sent rejoin data to peer {p.netPeer.Id} (player {p.playerIndex}, client frame ~{frame}, entity {(hasEntity ? "present" : "missing")}, {GameCode.Game.World.AllPlayers.Count} players in world)");
     }
 
     private static long EstimateClientFrame(int peerId)
