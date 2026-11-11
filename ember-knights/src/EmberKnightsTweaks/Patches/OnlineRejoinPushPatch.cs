@@ -114,13 +114,14 @@ internal static class OnlineRejoinPushPatch
     private static void Push(GameCode.XNetworkSYS.XNetPlayerData p)
     {
         var net = GameCode.Game.NetworkSYS;
-        if (p.netPeer == null)
+        // OnPeerDisconnected marks the record Disconnected but leaves netPeer set, so check both.
+        if (p.netPeer == null || p.connectionState == ConnState.Disconnected)
         {
             Plugin.Logger.LogWarning($"Online resume: player {p.playerIndex} left during loading");
             return;
         }
-        // The join handler sends rejoin data whether or not the player's entity still exists
-        // (a disconnected player's entity can be cleaned up); the rejoin flow rebuilds it.
+        // Natively nothing rebuilds a missing host-side entity (CommonPlayerConnected just exits),
+        // so a missing one here means the peer would rejoin as a spectator.
         var hasEntity = GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX();
         var frame = HostFrame;
         p.connectionState = ConnState.Reconnecting;

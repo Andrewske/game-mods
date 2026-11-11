@@ -20,11 +20,17 @@ internal static class OnlineResumePatch
     private static UITinyButton? resumeButton;
     private static bool resumeRequested;
     private static IntPtr lastDecoded = IntPtr.Zero;
+    private static IntPtr labelled = IntPtr.Zero;
 
     private static GameCode.SinglePlayerSavedState? SavedRun()
     {
         var slot = GameCode.Game?.CurrentSaveSlot;
-        var saved = slot == null ? null : slot.MultiplayerSavedState ?? slot.SavedState;
+        if (slot == null) return null;
+        // Save And Quit writes only one of the two (MultiplayerSavedState when 2+ players were in
+        // the world, else SavedState) and never clears the other, so both can be live. Match the
+        // lobby: with peers in it use the multiplayer save, alone prefer the solo one.
+        var withPeers = OnlineRejoinPushPatch.LobbyPeerIndexes().Count > 0;
+        var saved = withPeers ? slot.MultiplayerSavedState ?? slot.SavedState : slot.SavedState ?? slot.MultiplayerSavedState;
         // DecodeData mutates the state, so the same object is never resumed twice.
         return saved == null || saved.Pointer == lastDecoded ? null : saved;
     }
@@ -56,7 +62,14 @@ internal static class OnlineResumePatch
         {
             if (resumeButton == null || resumeButton.WasCollected) return;
             var start = __instance.Refs.HostStartGameButton;
-            var visible = start.gameObject.activeSelf && SavedRun() != null;
+            var saved = SavedRun();
+            var shown = saved == null ? IntPtr.Zero : saved.Pointer;
+            if (shown != labelled)
+            {
+                labelled = shown; // which save is offered changes when a peer joins or leaves
+                if (saved != null) resumeButton.SetText($"Resume: {Pretty(saved.AreaName.ToString())}");
+            }
+            var visible = start.gameObject.activeSelf && saved != null;
             resumeButton.interactable = start.interactable;
             if (visible == resumeButton.gameObject.activeSelf) return;
             resumeButton.gameObject.SetActive(visible);
@@ -168,7 +181,7 @@ internal static class OnlineResumePatch
             return false;
         }
         var slot = GameCode.Game.CurrentSaveSlot;
-        var which = slot.MultiplayerSavedState != null ? "MultiplayerSavedState" : "SavedState";
+        var which = slot.MultiplayerSavedState != null && saved.Pointer == slot.MultiplayerSavedState.Pointer ? "MultiplayerSavedState" : "SavedState";
         Plugin.Logger.LogInfo($"Online resume: starting from {which} ({saved.AreaName})");
         lastDecoded = saved.Pointer;
         saved.DecodeData(lobby.World.GameMods);

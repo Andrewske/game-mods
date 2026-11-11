@@ -138,3 +138,15 @@
 - v0.4.4 test: Bre's character was there on the host, but she was stuck on "rejoining, waiting for next room", and the host couldn't leave because her idle character blocked the door. Natively the final `Send_RejoinData` (serialize the world, send to the ReconnectLoadingDone players) only happens inside transitions: the TickSYS of XDoorLoadingSYS, XAreaLoadingSYS and XTeleportingSYS, plus TickTearPortalSequence and the ArchitectFakeBoss cutscene. The client's `Handle_S2C_RejoinData` just deserializes, runs CommonStart_EndLoading and ShowHud, then sends RejoinDone, so it doesn't need a transition. v0.4.5 calls Send_RejoinData from a `Handle_C2S_RejoinPreloadDone` postfix.
 - ClientFrame: after AllPlayersReady the client's GameEngine.CurrentFrame follows the server's (test 5: client 6447 vs server 6430), so pass the host frame. Aging the join-request frame gave calculatedServerFrame -8677. The join-request peek was removed.
 - v0.4.5 test: the rejoin completed (frames matched: 2700 vs 2701) and Bre moved briefly, then froze. Her movement never reached the host and the host never moved on her screen. Her log showed 6281 NullReferenceExceptions in `XPlayerSYS.Net_SendPlayerStateChange`, which does GetCMP(Player, XNetCMP), then writes NetCMP.NetId (0x20) without a null check. The client's RejoinGameCR spawns each player with `XNetPlayerData.NetId` (0x30) and characterData (0x28) from the host's list; the resume never updates those NetIds. v0.4.6 copies `World.GetNetIdForEntityId(entity.Id)` into each XNetPlayerData before the push. Unverified that they were 0; the log line "NetId a -> b" will show it.
+- GPT-6.1 review (2026-11-11), checked against the decomp. It found the NetId bug (fixed in v0.4.6) and the frame bug (fixed in v0.4.5) independently. Also confirmed:
+  - InitialJoinData resyncs the client's CurrentFrame, which is why the host frame is the right ClientFrame.
+  - RWPlayerId -1 survives the resume and PostFixupPlayers.
+  - Deserialize_RejoinData restores the full build: weapons, abilities, relics, Ember Tree, color.
+  - CommonPlayerConnected never rebuilds a missing host-side entity.
+  - OnPeerDisconnected leaves netPeer set. v0.4.7 also checks connectionState != Disconnected before the push.
+  - Save And Quit writes only one of SavedState/MultiplayerSavedState and never clears the other. v0.4.7 picks the multiplayer save when the lobby has peers, otherwise the solo save, and relabels the button when that changes.
+  Open:
+  - The client never learns the new GameId. Native `HandlePacket_S2C_GameStarted` sets NetworkSYS.GameId and the save slot's LastConnectedHostGameId (0x88). `SendJoinRequest` sends that id and the host requires an exact match, so a later mid-run disconnect-rejoin is rejected.
+  - The lobby is never marked in progress (StartGame_Internal's platform / `game/setLobbyInProgress` call).
+  - Iterator state < 0 also means "threw".
+  - A different roster or player index gets the wrong saved build, since saves have no player identity.
