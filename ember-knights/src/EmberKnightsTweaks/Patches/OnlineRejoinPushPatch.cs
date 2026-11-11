@@ -59,6 +59,9 @@ internal static class OnlineRejoinPushPatch
             pending.Add(p);
             Plugin.Logger.LogInfo($"Online resume: holding peer {p.netPeer.Id} (player {p.playerIndex}) until the run is loaded");
         }
+        var held = new System.Collections.Generic.List<int>();
+        foreach (var p in pending) held.Add(p.playerIndex);
+        OnlineResumeGuardPatch.Begin(held);
     }
 
     // The compiler-generated iterator keeps its state at 0x10: 0 before the first step, >= 0 while
@@ -74,6 +77,7 @@ internal static class OnlineRejoinPushPatch
         {
             if (!ResumeFinished) return;
             resumeCR = null;
+            OnlineResumeGuardPatch.StopBlocking();
             var players = pending.ToArray();
             pending.Clear();
             foreach (var p in players)
