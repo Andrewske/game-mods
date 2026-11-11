@@ -72,7 +72,7 @@ internal static class OnlineRejoinPushPatch
     [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.SpawnFloorCR))]
     internal static class BuildAreaLikeTheClient
     {
-        private static void Prefix(ref bool FromReconnect, ref GameCode.SinglePlayerSavedState sd)
+        private static void Prefix(ref bool FromReconnect, ref GameCode.SinglePlayerSavedState? sd)
         {
             if (resumeCR == null || pending.Count == 0) return;
             Plugin.Logger.LogInfo($"Online resume: building the area the rejoin way (FromReconnect {FromReconnect} -> True, saved run {(sd == null ? "none" : "dropped")})");

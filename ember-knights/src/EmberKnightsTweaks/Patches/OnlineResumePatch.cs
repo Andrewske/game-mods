@@ -42,6 +42,7 @@ internal static class OnlineResumePatch
     {
         private static void Postfix(GameCode.UIPlayerSelectOnline __instance)
         {
+            ResumedRunRejoinPatch.ResumedSession = false; // a new lobby means any earlier run is over
             if (!Plugin.OnlineResumeEnabled.Value || !IsHost) return;
             try
             {
@@ -67,10 +68,10 @@ internal static class OnlineResumePatch
             if (shown != labelled)
             {
                 labelled = shown; // which save is offered changes when a peer joins or leaves
-                if (saved != null) resumeButton.SetText($"Resume: {Pretty(saved.AreaName.ToString())}");
+                if (saved != null) resumeButton.SetText(Label(saved));
             }
             var visible = start.gameObject.activeSelf && saved != null;
-            resumeButton.interactable = start.interactable;
+            resumeButton.interactable = start.interactable && saved != null && RosterMatches(saved);
             if (visible == resumeButton.gameObject.activeSelf) return;
             resumeButton.gameObject.SetActive(visible);
             __instance.SetupNavigation(); // the postfix below splices Resume back in when visible
@@ -123,7 +124,11 @@ internal static class OnlineResumePatch
     {
         private static bool Prefix(GameCode.UIPlayerSelectOnline __instance)
         {
-            if (!resumeRequested) return true;
+            if (!resumeRequested)
+            {
+                ResumedRunRejoinPatch.ResumedSession = false; // a normal start sends its own GameId
+                return true;
+            }
             resumeRequested = false;
             try
             {
@@ -156,7 +161,7 @@ internal static class OnlineResumePatch
             lobby.SetupNavigation();
         }
         var saved = SavedRun();
-        resumeButton.SetText(saved == null ? "Resume" : $"Resume: {Pretty(saved.AreaName.ToString())}");
+        resumeButton.SetText(saved == null ? "Resume" : Label(saved));
         Plugin.Logger.LogInfo($"Online resume: button ready (saved run: {(saved == null ? "none" : saved.AreaName.ToString())})");
     }
 
@@ -180,6 +185,11 @@ internal static class OnlineResumePatch
             Plugin.Logger.LogWarning("Online resume: no saved run in this save slot (or already resumed this session)");
             return false;
         }
+        if (!RosterMatches(saved))
+        {
+            Plugin.Logger.LogWarning($"Online resume: the save has {saved.AllPlayerData.Count} players but the lobby has {LobbyPlayerCount()}; not resuming");
+            return false;
+        }
         var slot = GameCode.Game.CurrentSaveSlot;
         var which = slot.MultiplayerSavedState != null && saved.Pointer == slot.MultiplayerSavedState.Pointer ? "MultiplayerSavedState" : "SavedState";
         Plugin.Logger.LogInfo($"Online resume: starting from {which} ({saved.AreaName})");
@@ -194,8 +204,19 @@ internal static class OnlineResumePatch
         var cr = GameCode.Game.ResumeSavedStateCR(saved, players);
         OnlineRejoinPushPatch.HoldLobbyPeers(cr);
         GameCode.Run(cr);
+        ResumedRunRejoinPatch.ResumedSession = true;
         return true;
     }
+
+    // Saved players carry no identity, so builds are matched to lobby slots by index. Only offer a
+    // resume when the lobby has exactly as many players as the save, so none are dropped or swapped.
+    private static int LobbyPlayerCount() => 1 + OnlineRejoinPushPatch.LobbyPeerIndexes().Count;
+
+    private static bool RosterMatches(GameCode.SinglePlayerSavedState saved) =>
+        saved.AllPlayerData != null && saved.AllPlayerData.Count == LobbyPlayerCount();
+
+    private static string Label(GameCode.SinglePlayerSavedState saved) =>
+        $"Resume: {Pretty(saved.AreaName.ToString())} ({saved.AllPlayerData?.Count ?? 0}P)";
 
     private static string Pretty(string area) => Regex.Replace(area.Replace('_', ' '), "(?<=[a-z])(?=[A-Z])", " ");
 }
