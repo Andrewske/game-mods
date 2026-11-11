@@ -53,7 +53,6 @@ internal static class OnlineRejoinPushPatch
         awaitingPreload.Clear();
         awaitingConnected.Clear();
         resumeCR = null;
-        OnlineResumeGuardPatch.StopBlocking();
     }
 
     // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
@@ -74,9 +73,6 @@ internal static class OnlineRejoinPushPatch
             pending.Add(p);
             Plugin.Logger.LogInfo($"Online resume: holding peer {p.netPeer.Id} (player {p.playerIndex}) until the run is loaded");
         }
-        var held = new System.Collections.Generic.List<int>();
-        foreach (var p in pending) held.Add(p.playerIndex);
-        OnlineResumeGuardPatch.Begin(held);
     }
 
     // Room objects (props, doors, chests, room NPCs) get their NetIds from a running counter while
@@ -138,7 +134,6 @@ internal static class OnlineRejoinPushPatch
                 return;
             }
             resumeCR = null;
-            OnlineResumeGuardPatch.StopBlocking();
             var players = pending.ToArray();
             pending.Clear();
             SyncNetIds();
