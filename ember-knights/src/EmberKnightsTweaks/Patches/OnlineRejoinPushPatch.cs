@@ -27,6 +27,7 @@ internal static class OnlineRejoinPushPatch
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
     private static Il2CppSystem.Collections.IEnumerator? resumeCR;
     private static DateTime resumeStarted;
+    private static bool resumeSucceeded;
     // A resume that never finishes (host quit to menu mid-load, the coroutine threw or was stopped)
     // would leave resumeCR set forever, and BuildAreaLikeTheClient would then misbuild the next
     // normal start. Loading takes seconds, so give up after this.
@@ -61,6 +62,7 @@ internal static class OnlineRejoinPushPatch
         Reset();
         resumeCR = cr;
         resumeStarted = DateTime.UtcNow;
+        resumeSucceeded = false;
         var net = GameCode.Game?.NetworkSYS;
         if (net == null) return;
         net.SERVER_GameStarted = true;
@@ -99,8 +101,22 @@ internal static class OnlineRejoinPushPatch
     // The compiler-generated iterator keeps its state at 0x10: 0 before the first step, >= 0 while
     // suspended, -1 once MoveNext has returned false. Outside MoveNext, < 0 means finished.
     // (GameUI.ShowHud was tried as the trigger, but it fires before the players spawn.)
-    private static bool ResumeFinished =>
-        resumeCR != null && System.Runtime.InteropServices.Marshal.ReadInt32(resumeCR.Pointer + 0x10) < 0;
+    private static int ResumeState => System.Runtime.InteropServices.Marshal.ReadInt32(resumeCR!.Pointer + 0x10);
+
+    private static bool ResumeFinished => resumeCR != null && ResumeState < 0;
+
+    // MoveNext sets the state to -1 at the start of every step, so -1 alone can also mean the last
+    // step threw (review 2). ShowHud is the final call of ResumeSavedStateCR; when it runs directly
+    // from the resume's own step the state is -1, while the earlier ShowHud calls come from nested
+    // coroutines while the resume is suspended (state >= 0). That marks a resume that really ended.
+    [HarmonyPatch(typeof(GameCode.GameUI), nameof(GameCode.GameUI.ShowHud))]
+    internal static class MarkResumeDone
+    {
+        private static void Postfix()
+        {
+            if (resumeCR != null && ResumeState < 0) resumeSucceeded = true;
+        }
+    }
 
     [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.GameFixedUpdate))]
     internal static class PushWhenLoaded
@@ -115,6 +131,12 @@ internal static class OnlineRejoinPushPatch
                 return;
             }
             if (!ResumeFinished) return;
+            if (!resumeSucceeded)
+            {
+                Plugin.Logger.LogError("Online resume: the resume stopped before it finished loading; not bringing peers into a half-loaded run");
+                Reset();
+                return;
+            }
             resumeCR = null;
             OnlineResumeGuardPatch.StopBlocking();
             var players = pending.ToArray();

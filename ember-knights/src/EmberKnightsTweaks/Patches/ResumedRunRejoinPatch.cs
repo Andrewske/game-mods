@@ -57,7 +57,7 @@ internal static class ResumedRunRejoinPatch
 
     private static GameCode.XNetworkSYS.XNetPlayerData? FindReturningPlayer(GameCode.XNetworkSYS net, string platformId)
     {
-        if (string.IsNullOrEmpty(platformId)) return null;
+        if (string.IsNullOrEmpty(platformId) || net.KickedPlatformIds.Contains(platformId)) return null;
         foreach (var p in net.allPlayerStates)
         {
             if (p == null || p.PlatformId != platformId) continue;

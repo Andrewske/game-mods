@@ -21,6 +21,7 @@ internal static class OnlineResumePatch
     private static bool resumeRequested;
     private static IntPtr lastDecoded = IntPtr.Zero;
     private static IntPtr labelled = IntPtr.Zero;
+    private static IntPtr resumeTarget = IntPtr.Zero; // the save chosen when Resume was clicked
 
     private static GameCode.SinglePlayerSavedState? SavedRun()
     {
@@ -69,6 +70,14 @@ internal static class OnlineResumePatch
             {
                 labelled = shown; // which save is offered changes when a peer joins or leaves
                 if (saved != null) resumeButton.SetText(Label(saved));
+            }
+            if (resumeRequested && (shown != resumeTarget || !RosterMatches(saved!)))
+            {
+                // Someone left or joined during the countdown, so the save picked at click time no
+                // longer fits; the native countdown doesn't recheck the roster.
+                Plugin.Logger.LogWarning("Online resume: the lobby changed during the countdown; cancelling the resume");
+                resumeRequested = false;
+                __instance.CancelCountdown();
             }
             var visible = start.gameObject.activeSelf && saved != null;
             resumeButton.interactable = start.interactable && saved != null && RosterMatches(saved);
@@ -133,13 +142,16 @@ internal static class OnlineResumePatch
             resumeRequested = false;
             try
             {
-                return !TryResume(__instance);
+                if (TryResume(__instance)) return false;
             }
             catch (Exception e)
             {
-                Plugin.Logger.LogError($"Online resume failed, starting a normal run instead: {e}");
-                return true;
+                Plugin.Logger.LogError($"Online resume failed: {e}");
             }
+            // Never fall back to a fresh run: the players asked for their saved one.
+            Plugin.Logger.LogWarning("Online resume: not starting; cancelling the countdown");
+            __instance.CancelCountdown();
+            return false;
         }
     }
 
@@ -169,6 +181,13 @@ internal static class OnlineResumePatch
     private static void OnResumeClicked(GameCode.UIPlayerSelectOnline lobby)
     {
         Plugin.Logger.LogInfo("Online resume: Resume clicked");
+        var saved = SavedRun();
+        if (saved == null || !RosterMatches(saved))
+        {
+            Plugin.Logger.LogWarning("Online resume: no saved run that fits this lobby");
+            return;
+        }
+        resumeTarget = saved.Pointer;
         resumeRequested = true;
         lobby.HostStartGameClicked();
     }
@@ -184,6 +203,11 @@ internal static class OnlineResumePatch
         if (saved == null)
         {
             Plugin.Logger.LogWarning("Online resume: no saved run in this save slot (or already resumed this session)");
+            return false;
+        }
+        if (saved.Pointer != resumeTarget)
+        {
+            Plugin.Logger.LogWarning("Online resume: the saved run changed since Resume was clicked; not resuming");
             return false;
         }
         if (!RosterMatches(saved))
