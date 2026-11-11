@@ -10,7 +10,7 @@ namespace EmberKnightsTweaks.Patches;
 // needs nothing new:
 //   1. Before the resume starts, every connected peer is marked ReconnectWaitingForNextArea.
 //      The host's sync waits only count Connected players, so loading no longer blocks.
-//   2. When the resume finishes (GameUI.ShowHud), each peer gets what HandlePacket_C2S_JoinRequest
+//   2. When the resume coroutine has finished, each peer gets what HandlePacket_C2S_JoinRequest
 //      sends a reconnecting player: state Reconnecting, then SendInitialRejoinData. The client
 //      runs RejoinGameCR and reports back through the normal rejoin packets.
 // SendInitialRejoinData wants the client's current frame (the client uses it to estimate latency).
@@ -20,6 +20,7 @@ internal static class OnlineRejoinPushPatch
 {
     private static readonly System.Collections.Generic.Dictionary<int, (long client, long host)> joinFrames = new();
     private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
+    private static Il2CppSystem.Collections.IEnumerator? resumeCR;
 
     private static long HostFrame => GameEngine.Instance == null ? 0 : GameEngine.Instance.CurrentFrame;
 
@@ -43,9 +44,10 @@ internal static class OnlineRejoinPushPatch
     }
 
     // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
-    internal static void HoldLobbyPeers()
+    internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
     {
         pending.Clear();
+        resumeCR = cr;
         var net = GameCode.Game?.NetworkSYS;
         if (net == null) return;
         net.SERVER_GameStarted = true;
@@ -59,12 +61,19 @@ internal static class OnlineRejoinPushPatch
         }
     }
 
-    [HarmonyPatch(typeof(GameCode.GameUI), nameof(GameCode.GameUI.ShowHud))]
+    // The compiler-generated iterator keeps its state at 0x10: 0 before the first step, >= 0 while
+    // suspended, -1 once MoveNext has returned false. Outside MoveNext, < 0 means finished.
+    // (GameUI.ShowHud was tried as the trigger, but it fires before the players spawn.)
+    private static bool ResumeFinished =>
+        resumeCR != null && System.Runtime.InteropServices.Marshal.ReadInt32(resumeCR.Pointer + 0x10) < 0;
+
+    [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.GameFixedUpdate))]
     internal static class PushWhenLoaded
     {
         private static void Postfix()
         {
-            if (pending.Count == 0) return;
+            if (!ResumeFinished) return;
+            resumeCR = null;
             var players = pending.ToArray();
             pending.Clear();
             foreach (var p in players)
@@ -91,7 +100,7 @@ internal static class OnlineRejoinPushPatch
         }
         if (!GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX())
         {
-            Plugin.Logger.LogWarning($"Online resume: the saved run has no player {p.playerIndex}; that peer stays in limbo");
+            Plugin.Logger.LogWarning($"Online resume: the saved run has no player {p.playerIndex} ({GameCode.Game.World.AllPlayers.Count} players in the world); that peer stays in limbo");
             return;
         }
         var frame = EstimateClientFrame(p.netPeer.Id);
