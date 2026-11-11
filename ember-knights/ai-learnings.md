@@ -150,3 +150,4 @@
   - The lobby is never marked in progress (StartGame_Internal's platform / `game/setLobbyInProgress` call).
   - Iterator state < 0 also means "threw".
   - A different roster or player index gets the wrong saved build, since saves have no player identity.
+- v0.4.7 test: no freezes or exceptions. The NetIds were indeed 0 (player 0 went 0 -> 1, player 1 went 0 -> 2). But the room exit was open on the host and shut on the client. `XRoomSYS.TickCompleted` opens the doors once (XRoomCMP.OpenedDoors 0x118, then `EntityUtils.OpenDoorsInRoom`), and when it is the server it sends `NET_SendRoomStateChange{RoomInstId (XRoomCMP 0x30), type OpenDoors = 20}` (static). During a resume that send happens while the peer is parked in the lobby. v0.4.8 resends it from a `Handle_C2S_RejoinDone` postfix if the room's OpenedDoors is set. Client `Handle_RoomStateChanged` ISIL is broken, so it's unverified that it applies OpenDoors outside a fresh room.
