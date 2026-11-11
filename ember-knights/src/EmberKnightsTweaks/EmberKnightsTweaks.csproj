@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>EmberKnightsTweaks</AssemblyName>
+    <RootNamespace>EmberKnightsTweaks</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- Override on the command line: dotnet build -p:GameDir=/path/to/game -->
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/EmberKnights</GameDir>
+    <BepInExDir>$(GameDir)/BepInEx</BepInExDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInExDir)/core/BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/core/BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/core/0Harmony.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/core/Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/core/Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(BepInExDir)/interop/UnityEngine.UI.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExDir)/plugins/EmberKnightsTweaks" />
+  </Target>
+
+</Project>

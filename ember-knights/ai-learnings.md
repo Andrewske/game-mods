@@ -7,7 +7,24 @@
   Steam Cloud is on, so edit saves with the game closed and back them up first.
 - Logs: `compatdata/1135230/pfx/drive_c/users/steamuser/AppData/LocalLow/Doom Turtle/EmberKnights/Player.log` (+ `Player-prev.log`).
 - Netcode: Photon (`XNetworkPhoton`) with the game's own packet layer in `XNetworkSYS` (C2S_/S2C_ handlers). Kevin hosts, Bre joins online.
-- Loader plan: BepInEx 6 IL2CPP, same as ../ship-of-fools (not installed yet).
+- Loader: BepInEx 6 be.789 (IL2CPP win-x64), installed 2026-11-09 and confirmed working on metadata v31.1
+  (stable BepInEx rejects v31). First launch builds interop in ~1 min. Same `winhttp=native,builtin` prefix override as
+  ship-of-fools, in `compatdata/1135230/pfx/user.reg`. Backups of the original user.reg and rog.dat: `downloads/backups/`.
+- Plugin: `src/EmberKnightsTweaks` (`dotnet build -c Release` deploys to BepInEx/plugins). Needs `~/.dotnet` on PATH.
+  Tests for the game-free logic: `dotnet test src/EmberKnightsTweaks.Tests`.
+- The game's own "[Echo]" lines in Player.log go through Debug.LogError; they are not errors.
+- No existing Ember Knights mod scene (no Thunderstore community). GitHub "trainer" repos look like malware bait.
+- Bre's laptop: `slonk-n-breh-1` (Tailscale 100.86.233.106, Windows). No SSH server; get files via Taildrop.
+
+## Save format (save-tool/)
+- `ts_binary.py` decodes/encodes TSBinary (`TSType` enum in decomp `TSType.cs`): 1-byte tag + payload, Object/List =
+  int32 count (-1 = null), Object keys and strings = 7-bit length + UTF-8, DateTime = int64. Lists tag every element.
+  Round trip is byte-exact on the live save and all 11 backups.
+- Root: SaveVersion 59, GameVersion "2.3.1", Options, `Slots` (list of 3, null = unused), InputMapping1-4.
+  Kevin plays slot 0. Slot 1 holds fresh-save defaults (1 weapon, 7 skills, 43 relics), a handy baseline.
+- `save_view.py summary|dump` sorts the 115 slot keys into unlock / story / currency / stats / telemetry / session.
+  The save does not separate solo from co-op progress, so unlock sync = per-item union/max, leaving stats alone.
+- Tests: `uv run --no-project --with pytest pytest -q` (synthetic saves only; never commit a real rog.dat).
 
 ## Decompiling
 - Cpp2IL 2022.0.7 (ship-of-fools/tools) fails: "We support 24-29, got 31".
@@ -27,8 +44,126 @@
 - Resume: `GameInst.ResumeSavedStateCR(sd, List<ResumeSavedStateLocalMPPlayerData>)` maps saved players to local Rewired ids,
   then `ResumeSavedState_PostFixupPlayers`. Loading goes through `CommonStart_BeginLoadingCR(area, fromReconnect, fromSaveState)`.
 
+## Online save / resume mod (v0.3.0)
+- Verified 2026-11-09 (solo online): Save And Quit online writes `SavedState`; resuming from the online lobby put the host
+  back in the saved run. Rejoin by a second player (Bre) is still untested.
+- Hotkeys are unreliable: legacy `Input` saw other keys but never F9 (laptop Fn layer or Proton), so v0.3.0 uses a
+  cloned lobby button instead. Resume button = `Instantiate(Refs.HostStartGameButton.gameObject, same parent)`,
+  `SetText`, `onClick.RemoveAllListeners()`, `SetCallback(UnityAction)`; click sets a flag and calls
+  `HostStartGameClicked`, so the normal countdown runs, and the `StartGame_Internal` prefix resumes instead.
+  The copy needs `UIOptionsButtonRefs.Initialize()` (SetContent runs it on Refs.AllButtons: default anim + select/deselect
+  highlight hooks), or it stays lit, and `SetupNavigation` wires explicit Unity navigation
+  Start <-> Invite, so a postfix splices Start <-> Resume <-> next (controller nav verified v0.3.1).
+- A saved run has no player identity: `SavedStatePlayerData` = PlayerIndex, Difficulty, EasyModeDeathCounter,
+  WeaponChallengesData, WeaponDefId, ColorInfo. Matching saves to lobby members would need a mod-written sidecar.
+- `XNetworkBase.get_IsLocal` = `_connectionType` (0x58) is not Server(1)/Client(2). `OnlineSavePatch` sets it to None
+  around `CanSaveState` / `GetSaveState` on the host only, then restores it. Not inlined (both are real calls).
+- CanSaveState's room rule: `currentRoomCMP` (World+0xB0) roomState (0x6C) == 116 or 7, or roomType (0x68) == 11.
+- Pause > Main Menu (`UIPause.<ClickedMainMenu>b__27_0`): CanSaveState -> GetSaveState -> stored in
+  `CurrentSaveSlot.MultiplayerSavedState` if `World.AllPlayers.Count > 1`, else `.SavedState` -> SaveGameData ->
+  `SendHostClosedGame` when hosting.
+- `UIMainMenu.ClickedResumeSingle`: takes `GameInst.CurrentSaveSlot.SavedState`, nulls it + saves, `DecodeData(World.GameMods)`,
+  list of one `ResumeSavedStateLocalMPPlayerData { PlayerIndex 0, RWPlayerId 0 }`, `GameCode.Run(Game.ResumeSavedStateCR(...))`.
+  `OnlineResumePatch` does the same from the online lobby (`UIPlayerSelectOnline.Tick`, host, F9) but keeps the save.
+- Solo online lobbies were blocked on purpose in hotfix 2.3.1 ("players could start online multiplayer lobbies by
+  themselves"): `UIPlayerSelectOnline.CanStartGame` returns Joined count > 1. `SoloOnlineLobbyPatch` (AllowSoloOnline)
+  undoes that for the host, for solo testing only; reason for the block is unknown, so turn it off for real runs.
+- Online start (`UIPlayerSelectOnline.StartGame_Internal`): host sends char data + save slot to all peers, then StartGameCR.
+  Resume sends nothing to peers yet, so Bre has to come in through the rejoin path (step 3, untested).
+- ResumeSavedStateCR body (raw asm, Cpp2IL ISIL is empty): CommonStart_BeginLoadingCR, CreateNewPlayerSpawnData +
+  SpawnPlayer per saved player, SpawnAreaCR, `XNetworkSYS.Deserialize_RejoinData`, room restore, PostFixupPlayers, ShowHud.
+- Naming raw calls: `decomp/cs-addr` (Cpp2IL `--use-processor attributeinjector`) has `[Address(RVA=...)]` per method;
+  VA = 0x180000000 + RVA, then `objdump -d -M intel --start-address=... GameAssembly.dll`. Attribute Length can be
+  far too short for coroutines; use the next method's address as the end.
+
 ## Reconnect / unlocks
 - Host log lines: "StartGameWaitForReconnects", "Host sending N rejoin datas after area loading" (rejoins are queued until area load).
 - Rejoin failures show on the client, so get Bre's Player.log when one fails.
 - Host pushes some rewards to clients: S2C_WeaponUnlock, S2C_EmberRewardResponse, S2C_StartEmberDustSequenceResponse,
   S2C_EveeAbilityUpgradeUnlockedSequence. Other unlocks are probably saved by the host only (unconfirmed).
+
+## Nexus (pre-run) shop
+- One shared shop: `XGameState.NexusShopData` (`NexusShopData_t { ShopState, List<NexusShopItem_t> ShopItems }`), synced to clients,
+  so a host-only patch should be enough.
+- `NexusShopItem_t { eItemType ItemType; int ItemDefId; ushort ItemNetId; int SlotIndex }`. `eItemType`: Weapon 1, Relic 4, Ability 9, EmberTreeUpgrade 12.
+- Stock comes from `GameUtils.GenerateNexusShopItems_AUTH(World, SaveSlot, Rand, NumItems, OutItemList, FromReroll, ExcludeList)`:
+  pool = host slot's unlocked items, filtered by DLC / `XRelicDef.IsInPool` / `RelicUtils.PassesAllMaxOwnedChecks`, shuffled,
+  each pick gets `World.GetNextNetId()`. Spawned by `GameInst.SpawnNexusShopItems`; rerolls via `GameUtils.ReRollNexusShop`.
+- `GameInst.GetNumberOfNexusShopItems` is a constant 4.
+- Shop rules (from Kevin): both players share the same 4 slots, so 4 relics total per run. A bought slot stays empty;
+  a reroll refills only the open slots.
+
+### Favorite-relics mod (v0.1.0, verified in game 2026-11-09: stock 179,177,219,131; buy one + reroll gave 92,152,130)
+- Ordered favorites queue (Kevin + Bre, 2026-11-08; they may trim it to 4 later):
+  179 Absolute Ambition, 177 Pristine Band, 219 Goliath Wargear, 131 Call to Arms, 92 Gilded Remains,
+  152 Titan's Wargear, 130 Supreme Ambition, 133 Spite Shield, 146 Mimic King's Consort, 220 Midas Mail.
+  All 10 are unlocked in Kevin's slot 0.
+- Behavior: first stock = first 4 favorites. Each reroll fills open slots with the next favorites in the queue (skip
+  ones already on display or owned). Once the queue runs out, keep the game's own random picks. Reset the queue cursor
+  on a fresh stock (`FromReroll == false`). Rerolled-away favorites don't come straight back.
+- Callers: `GameInst.StartGameCR` (first stock, FromReroll false) and `PlayerUtils.ReRollNexusShop` (host only). The
+  reroll counts the shop drops still on display, passes that as NumItems, the live `NexusShopData.ShopItems` as
+  OutItemList and the old items as ExcludeList, then puts the old SlotIndex values back and sends NexusShopData to peers.
+- The generator also mixes in skills (abilities) by `XRandom.Chance01`; the mod turns replaced slots into relics.
+- Hook: Harmony postfix on `GameUtils.GenerateNexusShopItems_AUTH`. Overwrites ItemType = Relic and ItemDefId on the
+  last NumItems entries, keeps ItemNetId (struct list: write back `list[i] = modified`). Each favorite is offered at
+  most once per run (cursor only moves forward), so a bought favorite never comes back from the queue.
+- Eligibility mirrors the generator: `XRelicDef.Get(id)`, `enabled`, `SaveSlot.IsItemUnlocked(def)`,
+  `IsInPool(NexusShop 9, Nexus 6)`, `RelicUtils.PassesAllMaxOwnedChecks(def, counts, World.AllPlayers, null)` with
+  counts from `GetRelicInstanceCounts(World, Nexus, ref counts)`. Pool check skips DLC (generator also calls HasDLC).
+- Off in Daily Dungeon / Boss Rush (`World.IsDailyDungeon` / `IsBossRush`). Log line per stock/reroll in LogOutput.log.
+- OPEN QUESTION (Kevin asking Bre): should the queue re-offer a relic one player already owns? They might want a second
+  copy when both can own it. Until decided, follow the game's own max-owned rules only. Relevant `XRelicDef` fields:
+  `CheckAllPlayers`, `MaxGloballyOwned`, `MaxPlayerOwned`.
+- Config (BepInEx cfg): `Enabled`, `FavoriteRelics = 179,177,219,131,92,152,130,133,146,220` (ids; names optional later).
+- Test checklist: first stock shows favorites 1-4 with normal prices; buy one, reroll, open slots get 5+; Bre's client
+  sees the same items and can buy them; queue resets next run.
+- Relic names: `data/relic-names.tsv` (131 relics), from the English table in resources.assets (`relic_name_<defId>`,
+  find it via `\nui_common_quit;Quit\r\n`; rows end in CRLF). IDs match the values in the save's `relicUnlocks`.
+
+## Online resume with a second player (v0.4.0, untested)
+- First 2-player test of v0.3.2: the host loaded the save, then hung in `SpawnAreaCR` -> `NET_SyncStartAreaDataCR`. The client sat at countdown "1" because resume skips `StartGame_Internal`, which is what sends the start packet (and rolls `XNetworkSYS.GameId` at 0x128, and sets the lobby "in progress" on the web API).
+- Host sync waits (`XNetworkSYS.TickWaitNetSyncFlag`, `NetWaitForAllLoadingCR`) only count `XNetPlayerData.IsConnected` (connectionState 0x4C == Connected 5). Players in other states are skipped.
+- Mid-run join (`HandlePacket_C2S_JoinRequest`, if `SERVER_GameStarted` 0xAC): request GameId must equal host GameId, and the PlatformId must be in `allPlayerStates` (0x108). Then it sets the state to Reconnecting (2), or to ReconnectWaitingForNextArea (4) plus `PlayersWaitingForNextArea` while loading. It sends `NET_SendPlayerConnectionStateUpdate`, sets lastAckedSnapshotId (0x88) to -1, and calls `SendInitialRejoinData(peer, clientFrame, idx, inEnterTear)`.
+- Client `Handle_S2C_InitialRejoinData` only checks IsClient, then runs `GameInst.RejoinGameCR`. No lobby-state guard, so the host can push it to a client still sitting in the lobby.
+- The ClientFrame arg is the first UInt64 of the client's join request (`GameEngine.Instance.CurrentFrame` on the client). The client uses it to estimate latency.
+- The main-menu Rejoin button shows for 10 minutes after a disconnect (`SavedPlayerSlot.LastConnectedHost*`, 0x70-0x90).
+- v0.4.0 (`OnlineRejoinPushPatch`):
+  - Before resume, marks lobby peers state 4 and sets SERVER_GameStarted and a new GameId.
+  - Once resume finishes, pushes rejoin data to each peer. v0.4.0 used a `GameUI.ShowHud` postfix as the trigger, but ShowHud also fires before the players spawn, so the push found no player 1. v0.4.1 polls the iterator state at 0x10 (< 0 means finished) from a `GameInst.GameFixedUpdate` postfix.
+  - The client frame is captured in a JoinRequest prefix that reads ahead in the XByteReader (Position 0x18), then aged by host frames.
+- v0.4.1 test: the MP save holds 2 `AllPlayerData` entries, and resume spawns both, but by the end only 1 player is in `World.AllPlayers`. Something drops the held peer's entity. The native join handler doesn't require the entity (it only resets input when the entity exists), so v0.4.2 pushes anyway and logs whether the entity is there.
+- v0.4.2 test: the rejoin handshake worked end to end (InitialRejoinData, RejoinPreloadDone, RejoinData, RejoinDone, door sync flags). The client loaded the area but had no character ("waiting for next room") because the host's player 1 entity was already gone. The `Deserialize_RejoinData` cleanup branch (state != Connected goes to `_PendingPlayerCleanup`) only runs when FromRejoin is true, i.e. client side, so it isn't the cause on the host. v0.4.3 adds `OnlineResumeGuardPatch`: during the resume it blocks and logs every removal path for held players (CommonPlayerDisconnected, CleanupDisconnectedPlayers, XWorld.RemoveEntityFromLists[_INTERNAL]), and after the push it only logs. Each hit also goes to Debug.LogError, which puts the Unity stack trace in Player.log.
+- v0.4.3 test: the guard caught `XWorld.Dispose(player 1)` called straight from `ResumeSavedStateCR.MoveNext`, right after Deserialize_RejoinData. After restoring, the coroutine loops over the world's players and looks each one up in JoinedPlayers by PlayerIndex (XPlayerCMP+0x5c). On a match it copies RWPlayerId into player+0x6c and input+0x20 and sets the position; with no match it disposes the player (meant for local co-op players who didn't return). Blocking the dispose froze the load. v0.4.4 adds a JoinedPlayers entry `{PlayerIndex = peer index, RWPlayerId = -1}` for each lobby peer (-1 is the "not local" default from the spawn loop). The guard is now watch-only.
+- v0.4.4 test: Bre's character was there on the host, but she was stuck on "rejoining, waiting for next room", and the host couldn't leave because her idle character blocked the door. Natively the final `Send_RejoinData` (serialize the world, send to the ReconnectLoadingDone players) only happens inside transitions: the TickSYS of XDoorLoadingSYS, XAreaLoadingSYS and XTeleportingSYS, plus TickTearPortalSequence and the ArchitectFakeBoss cutscene. The client's `Handle_S2C_RejoinData` just deserializes, runs CommonStart_EndLoading and ShowHud, then sends RejoinDone, so it doesn't need a transition. v0.4.5 calls Send_RejoinData from a `Handle_C2S_RejoinPreloadDone` postfix.
+- ClientFrame: after AllPlayersReady the client's GameEngine.CurrentFrame follows the server's (test 5: client 6447 vs server 6430), so pass the host frame. Aging the join-request frame gave calculatedServerFrame -8677. The join-request peek was removed.
+- v0.4.5 test: the rejoin completed (frames matched: 2700 vs 2701) and Bre moved briefly, then froze. Her movement never reached the host and the host never moved on her screen. Her log showed 6281 NullReferenceExceptions in `XPlayerSYS.Net_SendPlayerStateChange`, which does GetCMP(Player, XNetCMP), then writes NetCMP.NetId (0x20) without a null check. The client's RejoinGameCR spawns each player with `XNetPlayerData.NetId` (0x30) and characterData (0x28) from the host's list; the resume never updates those NetIds. v0.4.6 copies `World.GetNetIdForEntityId(entity.Id)` into each XNetPlayerData before the push. Unverified that they were 0; the log line "NetId a -> b" will show it.
+- GPT-6.1 review (2026-11-11), checked against the decomp. It found the NetId bug (fixed in v0.4.6) and the frame bug (fixed in v0.4.5) independently. Also confirmed:
+  - InitialJoinData resyncs the client's CurrentFrame, which is why the host frame is the right ClientFrame.
+  - RWPlayerId -1 survives the resume and PostFixupPlayers.
+  - Deserialize_RejoinData restores the full build: weapons, abilities, relics, Ember Tree, color.
+  - CommonPlayerConnected never rebuilds a missing host-side entity.
+  - OnPeerDisconnected leaves netPeer set. v0.4.7 also checks connectionState != Disconnected before the push.
+  - Save And Quit writes only one of SavedState/MultiplayerSavedState and never clears the other. v0.4.7 picks the multiplayer save when the lobby has peers, otherwise the solo save, and relabels the button when that changes.
+  Open:
+  - The client never learns the new GameId. Native `HandlePacket_S2C_GameStarted` sets NetworkSYS.GameId and the save slot's LastConnectedHostGameId (0x88). `SendJoinRequest` sends that id and the host requires an exact match, so a later mid-run disconnect-rejoin is rejected.
+  - The lobby is never marked in progress (StartGame_Internal's platform / `game/setLobbyInProgress` call).
+  - Iterator state < 0 also means "threw".
+  - A different roster or player index gets the wrong saved build, since saves have no player identity.
+- v0.4.7 test: no freezes or exceptions. The NetIds were indeed 0 (player 0 went 0 -> 1, player 1 went 0 -> 2). But the room exit was open on the host and shut on the client. `XRoomSYS.TickCompleted` opens the doors once (XRoomCMP.OpenedDoors 0x118, then `EntityUtils.OpenDoorsInRoom`), and when it is the server it sends `NET_SendRoomStateChange{RoomInstId (XRoomCMP 0x30), type OpenDoors = 20}` (static). During a resume that send happens while the peer is parked in the lobby. v0.4.8 resends it from a `Handle_C2S_RejoinDone` postfix if the room's OpenedDoors is set. Client `Handle_RoomStateChanged` ISIL is broken, so it's unverified that it applies OpenDoors outside a fresh room.
+- v0.4.8 test: the doors were still shut and the OpenDoors resend never ran. `Handle_C2S_RejoinDone` is inlined into `XNetworkSYS.OnNetworkReceive` (its echo's stack trace shows OnNetworkReceive calling echo directly), so a Harmony patch on it never fires. Handle_C2S_RejoinPreloadDone is a real call, and its postfix works. **Always check a target's echo stack trace in Player.log before patching a packet handler.** v0.4.9 watches the pushed player's connectionState for Connected from the GameFixedUpdate postfix instead.
+- Client `Handle_RoomStateChanged` switches on (type - 1) through a jump table at VA 0x180df789c. Case OpenDoors (20) calls `EntityUtils.OpenDoorsInRoom(World.currentRoomCMP, World)` unconditionally. Complete (19) is a no-op on clients.
+- BepInEx's disk log is buffered by default (InstantFlushing = false), so the latest lines only show up after the game quits. Turned on `[Logging.Disk] InstantFlushing = true` in BepInEx.cfg on Kevin's PC.
+- v0.4.9 test: the doors worked (the OpenDoors resend fired). But Bre couldn't break vases or spider eggs, and her log had 3 ArgumentOutOfRange errors in `HandlePacket_S2C_SnapshotNEW`. Cause: area generation hands out NetIds from a running counter as `SpawnFloorCR(FloorInst, Rand, AreaLayout, FromReconnect, sd)` walks the rooms. For each room it calls SpawnRoomEntity, then SpawnEntitiesForRoom(..., sd), then SpawnRoomProps for the start room (or the saved current room when FromSavedState). With FromReconnect false it also runs InstantiateRoom(start) and InstantiateNextRooms. The host resume passes (false, sd) and the rejoining client passes (true, null), so they ended generation at 730 vs 843 and every room object NetId differed. v0.5.0 has a SpawnFloorCR prefix that forces (true, null) on the host while peers are held. The current room is then instantiated by Deserialize_RejoinData's InstantiateSpecificRoom with the saved BeginningNetId, the same as on the client. Untested; watch for "Ended generation ... NetId = 843" on the host.
+- v0.5.0 test (2026-11-11): the 2-player resume works end to end. Generation matched (843/843), and Bre could break props, fight and use doors. Bre's log had 2 SnapshotNEW parse errors right after one door transition, then nothing more.
+- v0.5.1:
+  - `ResumedRunRejoinPatch`: a prefix on HandlePacket_C2S_JoinRequest (a real call, not inlined) reads ahead in the request (UInt64 frame + JoinGameRequestData, then rewinds Position). During a resumed session, if the PlatformId belongs to a player in allPlayerStates who isn't Connected, it sets XNetworkSYS.GameId to the request's GameId so the native rejoin check passes.
+  - The Resume button shows the save's player count "(2P)" and is disabled unless the lobby has exactly that many players.
+- v0.5.2 (from my own review): `OnlineRejoinPushPatch.Reset()` runs on a normal start (the non-resume branch of the StartGame_Internal prefix), and also when a resume hasn't finished within 3 minutes. Without it, an aborted resume left resumeCR set, and the SpawnFloorCR prefix would have built the next normal start's area the rejoin way.
+- GPT review 2 (2026-11-11) findings, checked and fixed in v0.5.3:
+  - (1) The roster could change during the countdown. The save is now captured when Resume is clicked. The SyncButton tick cancels the countdown (`CancelCountdown`) if the offered save or the roster changes. A failed resume now cancels the countdown instead of falling back to a fresh run.
+  - (3) Iterator state -1 can also mean "threw". The only `GameUI.ShowHud` call in ResumeSavedStateCR.MoveNext is at 0x180F6D04D, right before it returns false. A ShowHud postfix that sees the resume's state < 0 marks success; without that mark, the resume is reset instead of pushed.
+  - Kicked PlatformIds no longer change GameId.
+- Review 2's finding (2) is accepted for now: dropping sd in SpawnFloorCR skips saved-state suppression of traps and queued props in completed rooms, including the saved current room. Host and client match because the rejoining client spawns them too, but cleared rooms can get breakables (maybe traps) back. A proper fix would keep NetId allocation and apply the suppression afterward.
+- Review 2 also confirmed: the packet id is a UInt16 consumed by OnNetworkReceive, and JoinRequest is a real call (0x180E050E0). `UIJoinLobbyOverlay.OnJoinRequestAccepted` sets LastConnectedHost and its timestamp, so the client's main-menu Rejoin button should work after a resumed run.
+- v0.5.3 test: a mid-run disconnect and rejoin worked. Bre's client asked with GameId 0, the host adopted it, and the native rejoin completed. Her client used the main-menu Rejoin button. No exceptions on either side. v0.5.4 removes the diagnostic OnlineResumeGuardPatch (its job is done; it logged stack traces whenever a player entity was removed).

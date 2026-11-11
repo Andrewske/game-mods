@@ -1,0 +1,265 @@
+using System;
+using HarmonyLib;
+using ConnState = GameCode.XNetworkSYS.XNetPlayerData.eConnectionState;
+
+namespace EmberKnightsTweaks.Patches;
+
+// A resumed online run skips StartGame_Internal, so lobby peers never get the "game started"
+// packet, and the host's area sync (NET_SyncStartAreaDataCR) waits forever for their ack.
+// This brings them in the way the game handles a mid-run reconnect, so their (unmodded) game
+// needs nothing new:
+//   1. Before the resume starts, every connected peer is marked ReconnectWaitingForNextArea.
+//      The host's sync waits only count Connected players, so loading no longer blocks.
+//   2. When the resume coroutine has finished, each peer gets what HandlePacket_C2S_JoinRequest
+//      sends a reconnecting player: state Reconnecting, then SendInitialRejoinData. The client
+//      runs RejoinGameCR and answers C2S_RejoinPreloadDone (host sets ReconnectLoadingDone).
+//   3. Natively the host only sends the final Send_RejoinData during the next transition (door,
+//      area loading, teleport). A resumed peer's character is standing in the room, so the host
+//      can't get through a door and that never happens. The client's S2C_RejoinData handler
+//      doesn't need a transition, so it is sent right after the preload ack instead.
+// ClientFrame (used by the client to estimate latency): once the client has had AllPlayersReady
+// its frame counter follows the server's, so the host frame is the right value. Aging the frame
+// from the join request was wrong (test 5: calculatedServerFrame -8677).
+internal static class OnlineRejoinPushPatch
+{
+    private static readonly System.Collections.Generic.HashSet<int> awaitingPreload = new();
+    private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> awaitingConnected = new();
+    private static readonly System.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData> pending = new();
+    private static Il2CppSystem.Collections.IEnumerator? resumeCR;
+    private static DateTime resumeStarted;
+    private static bool resumeSucceeded;
+    // A resume that never finishes (host quit to menu mid-load, the coroutine threw or was stopped)
+    // would leave resumeCR set forever, and BuildAreaLikeTheClient would then misbuild the next
+    // normal start. Loading takes seconds, so give up after this.
+    private static readonly TimeSpan ResumeTimeout = TimeSpan.FromMinutes(3);
+
+    private static long HostFrame => GameEngine.Instance == null ? 0 : GameEngine.Instance.CurrentFrame;
+
+    internal static System.Collections.Generic.List<int> LobbyPeerIndexes()
+    {
+        var indexes = new System.Collections.Generic.List<int>();
+        var net = GameCode.Game?.NetworkSYS;
+        if (net == null) return indexes;
+        foreach (var p in net.allPlayerStates)
+            if (p != null && p.netPeer != null && p.playerIndex != 0) indexes.Add(p.playerIndex);
+        return indexes;
+    }
+
+    // Drops all resume bookkeeping. Called when a normal run starts and when a resume times out.
+    internal static void Reset()
+    {
+        if (resumeCR != null || pending.Count > 0) Plugin.Logger.LogInfo("Online resume: clearing leftover resume state");
+        pending.Clear();
+        awaitingPreload.Clear();
+        awaitingConnected.Clear();
+        resumeCR = null;
+    }
+
+    // Called by OnlineResumePatch right before ResumeSavedStateCR starts.
+    internal static void HoldLobbyPeers(Il2CppSystem.Collections.IEnumerator cr)
+    {
+        Reset();
+        resumeCR = cr;
+        resumeStarted = DateTime.UtcNow;
+        resumeSucceeded = false;
+        var net = GameCode.Game?.NetworkSYS;
+        if (net == null) return;
+        net.SERVER_GameStarted = true;
+        net.GameId = (ulong)DateTime.UtcNow.Ticks; // StartGame_Internal rolls a fresh id per run
+        foreach (var p in net.allPlayerStates)
+        {
+            if (p == null || p.netPeer == null || p.playerIndex == 0) continue;
+            p.connectionState = ConnState.ReconnectWaitingForNextArea;
+            pending.Add(p);
+            Plugin.Logger.LogInfo($"Online resume: holding peer {p.netPeer.Id} (player {p.playerIndex}) until the run is loaded");
+        }
+    }
+
+    // Room objects (props, doors, chests, room NPCs) get their NetIds from a running counter while
+    // SpawnFloorCR walks the rooms, and what it spawns depends on FromReconnect and sd. The host's
+    // resume calls it with (false, saved run); the rejoining client with (true, null). Test 9: host
+    // ended generation at NetId 730, client at 843, so the client's hits on vases/eggs named the
+    // wrong entities and some snapshots failed to parse. While peers are held, build the host's
+    // area the client's way. The saved current room is still instantiated by Deserialize_RejoinData
+    // with its saved BeginningNetId, exactly as on the client.
+    [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.SpawnFloorCR))]
+    internal static class BuildAreaLikeTheClient
+    {
+        private static void Prefix(ref bool FromReconnect, ref GameCode.SinglePlayerSavedState? sd)
+        {
+            if (resumeCR == null || pending.Count == 0) return;
+            Plugin.Logger.LogInfo($"Online resume: building the area the rejoin way (FromReconnect {FromReconnect} -> True, saved run {(sd == null ? "none" : "dropped")})");
+            FromReconnect = true;
+            sd = null;
+        }
+    }
+
+    // The compiler-generated iterator keeps its state at 0x10: 0 before the first step, >= 0 while
+    // suspended, -1 once MoveNext has returned false. Outside MoveNext, < 0 means finished.
+    // (GameUI.ShowHud was tried as the trigger, but it fires before the players spawn.)
+    private static int ResumeState => System.Runtime.InteropServices.Marshal.ReadInt32(resumeCR!.Pointer + 0x10);
+
+    private static bool ResumeFinished => resumeCR != null && ResumeState < 0;
+
+    // MoveNext sets the state to -1 at the start of every step, so -1 alone can also mean the last
+    // step threw (review 2). ShowHud is the final call of ResumeSavedStateCR; when it runs directly
+    // from the resume's own step the state is -1, while the earlier ShowHud calls come from nested
+    // coroutines while the resume is suspended (state >= 0). That marks a resume that really ended.
+    [HarmonyPatch(typeof(GameCode.GameUI), nameof(GameCode.GameUI.ShowHud))]
+    internal static class MarkResumeDone
+    {
+        private static void Postfix()
+        {
+            if (resumeCR != null && ResumeState < 0) resumeSucceeded = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(GameCode.GameInst), nameof(GameCode.GameInst.GameFixedUpdate))]
+    internal static class PushWhenLoaded
+    {
+        private static void Postfix()
+        {
+            WatchForConnected();
+            if (resumeCR != null && DateTime.UtcNow - resumeStarted > ResumeTimeout)
+            {
+                Plugin.Logger.LogWarning("Online resume: the resume never finished; giving up on bringing peers in");
+                Reset();
+                return;
+            }
+            if (!ResumeFinished) return;
+            if (!resumeSucceeded)
+            {
+                Plugin.Logger.LogError("Online resume: the resume stopped before it finished loading; not bringing peers into a half-loaded run");
+                Reset();
+                return;
+            }
+            resumeCR = null;
+            var players = pending.ToArray();
+            pending.Clear();
+            SyncNetIds();
+            foreach (var p in players)
+            {
+                try
+                {
+                    Push(p);
+                }
+                catch (Exception e)
+                {
+                    Plugin.Logger.LogError($"Online resume: rejoin push to player {p.playerIndex} failed: {e}");
+                }
+            }
+        }
+    }
+
+    // The rejoining client spawns every player with XNetPlayerData.NetId (RejoinGameCR), and an
+    // entity spawned with NetId 0 gets no XNetCMP, so XPlayerSYS.Net_SendPlayerStateChange throws
+    // every frame (test 6: her movement never reached the host, she never saw his). StartGameCR
+    // records the NetIds; ResumeSavedStateCR spawns players with NetId = index + 1 but leaves the
+    // net player list as the lobby set it, so copy the real ids over.
+    private static void SyncNetIds()
+    {
+        var world = GameCode.Game.World;
+        foreach (var p in GameCode.Game.NetworkSYS.allPlayerStates)
+        {
+            if (p == null) continue;
+            var entity = world.GetPlayerByPlayerIndex(p.playerIndex);
+            if (!entity.IsValidEX()) continue;
+            var netId = world.GetNetIdForEntityId(entity.Id);
+            if (netId == p.NetId) continue;
+            Plugin.Logger.LogInfo($"Online resume: player {p.playerIndex} NetId {p.NetId} -> {netId}");
+            p.NetId = netId;
+        }
+    }
+
+    private static void Push(GameCode.XNetworkSYS.XNetPlayerData p)
+    {
+        var net = GameCode.Game.NetworkSYS;
+        // OnPeerDisconnected marks the record Disconnected but leaves netPeer set, so check both.
+        if (p.netPeer == null || p.connectionState == ConnState.Disconnected)
+        {
+            Plugin.Logger.LogWarning($"Online resume: player {p.playerIndex} left during loading");
+            return;
+        }
+        // Natively nothing rebuilds a missing host-side entity (CommonPlayerConnected just exits),
+        // so a missing one here means the peer would rejoin as a spectator.
+        var hasEntity = GameCode.Game.World.GetPlayerByPlayerIndex(p.playerIndex).IsValidEX();
+        var frame = HostFrame;
+        p.connectionState = ConnState.Reconnecting;
+        net.NET_SendPlayerConnectionStateUpdate(p.playerIndex, ConnState.Reconnecting, false);
+        p.lastAckedSnapshotId = -1;
+        net.SendInitialRejoinData(p.netPeer, frame, p.playerIndex, false, false);
+        awaitingPreload.Add(p.playerIndex);
+        awaitingConnected.Add(p);
+        Plugin.Logger.LogInfo($"Online resume: sent rejoin data to peer {p.netPeer.Id} (player {p.playerIndex}, client frame ~{frame}, entity {(hasEntity ? "present" : "missing")}, {GameCode.Game.World.AllPlayers.Count} players in world)");
+    }
+
+    [HarmonyPatch(typeof(GameCode.XNetworkSYS), "Handle_C2S_RejoinPreloadDone")]
+    internal static class SendRejoinDataNow
+    {
+        private static void Postfix(GameCode.XNetworkSYS __instance)
+        {
+            if (awaitingPreload.Count == 0) return;
+            var ready = new Il2CppSystem.Collections.Generic.List<GameCode.XNetworkSYS.XNetPlayerData>();
+            foreach (var p in __instance.allPlayerStates)
+            {
+                if (p == null || !awaitingPreload.Contains(p.playerIndex)) continue;
+                if (p.connectionState != ConnState.ReconnectLoadingDone) continue;
+                awaitingPreload.Remove(p.playerIndex);
+                ready.Add(p);
+            }
+            if (ready.Count == 0) return;
+            try
+            {
+                GameCode.XNetworkSYS.Send_RejoinData(GameCode.Game.World, ready);
+                Plugin.Logger.LogInfo($"Online resume: sent the final rejoin data to {ready.Count} player(s) without waiting for a transition");
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Online resume: Send_RejoinData failed: {e}");
+            }
+        }
+    }
+
+    // The room's OpenDoors change goes out once, from XRoomSYS.TickCompleted, when it first opens
+    // the doors. On a resume that happens while the peer is still parked in the lobby, so their
+    // copy of the room stays shut (test 7: exit highlighted for the host, blocked for the client).
+    // The client's handler opens the current room's doors on it unconditionally, so it is resent
+    // once the peer is Connected. Handle_C2S_RejoinDone is inlined into OnNetworkReceive (test 8:
+    // a postfix on it never ran), so this watches the connection state from the frame hook.
+    private static void WatchForConnected()
+    {
+        if (awaitingConnected.Count == 0) return;
+        var connected = false;
+        for (var i = awaitingConnected.Count - 1; i >= 0; i--)
+        {
+            var state = awaitingConnected[i].connectionState;
+            if (state == ConnState.Connected) connected = true;
+            if (state == ConnState.Connected || state == ConnState.Disconnected) awaitingConnected.RemoveAt(i);
+        }
+        if (connected) ResendOpenDoors();
+    }
+
+    private static void ResendOpenDoors()
+    {
+        try
+        {
+            var room = GameCode.Game.World.currentRoomCMP;
+            if (room == null || !room.OpenedDoors)
+            {
+                Plugin.Logger.LogInfo("Online resume: current room's doors aren't open yet; the game will send that itself");
+                return;
+            }
+            var data = new GameCode.XRoomSYS.RoomStateChangeData_t
+            {
+                RoomInstId = room.RoomInstId,
+                type = GameCode.XRoomSYS.eRoomStateChangeType.OpenDoors,
+            };
+            GameCode.XRoomSYS.NET_SendRoomStateChange(data);
+            Plugin.Logger.LogInfo($"Online resume: resent OpenDoors for room {room.RoomInstId}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogError($"Online resume: could not resend OpenDoors: {e}");
+        }
+    }
+}
